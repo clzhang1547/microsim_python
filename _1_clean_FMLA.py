@@ -5,16 +5,22 @@ for behavioral estimation
 
 # Housekeeping
 import pandas as pd
-pd.set_option('display.max_columns', 999)
-pd.set_option('display.width', 200)
 import numpy as np
-
+import random
 # Read in FMLA data
 d = pd.read_csv("data/fmla_2012/fmla_2012_employee_restrict_puf.csv")
 
+# Make empid to follow 0-order to be consistent with Python standard (e.g. indices output from kNN)
+d['empid'] = d['empid'].apply(lambda x: x-1)
+
 # FMLA eligible worker
-d['eligworker'] = np.where((d['E13']==1) & ((d['E14'] == 1) | ((d['E15_CAT'] >= 5) & (d['E15_CAT'] <= 8))), 1, 0)
-d['eligworker'] = np.where((np.isnan(d['E13'])) & (np.isnan(d['E14'])) & (np.isnan(d['E15_CAT'])), np.nan,d['eligworker'])
+d['eligworker'] = np.nan
+    # eligible workers
+d.loc[(d['E13']==1) & ((d['E14'] == 1) | ((d['E15_CAT'] >= 5) & (d['E15_CAT'] <= 8))), 'eligworker'] = 1
+    # ineligible workers
+d.loc[(d['E13'].notna()) & (d['E13']!=1), 'eligworker'] = 0 # E13 same job past year fails
+d.loc[(d['E14'].notna()) & (d['E14']!=1)
+      & (d['E15_CAT'].notna()) & ((d['E15_CAT'] < 5) | (d['E15_CAT'] > 8)), 'eligworker'] = 0 # E14 (FT) and E15 (hrs) fails
 
 # Covered workplace
 d['covwrkplace'] = np.where((d['E11']==1) | ((d['E12'] >= 6) & (d['E12'] <= 9)), 1, 0)
@@ -76,7 +82,9 @@ d['agesq'] = np.array(d['age'])**2
 
 # Sex
 d['male']   = np.where(d['GENDER_CAT']==1,1,0)
+d.loc[d['GENDER_CAT'].isna(), 'male'] = np.nan
 d['female'] = np.where(d['GENDER_CAT']==2,1,0)
+d.loc[d['GENDER_CAT'].isna(), 'female'] = np.nan
 
 # No children
 d['nochildren'] = np.where(d['D7_CAT']==0,1,0)
@@ -187,7 +195,7 @@ d['hospital_need'] = np.where(np.isnan(d['B13_1']),np.nan,d['hospital_need'])
 d['hospital_need'] = np.where(np.isnan(d['hospital_need']) & (d['doctor_need']==0),0,d['hospital_need'])
 
 # taken or needed doctor or hospital for leave category
-d['doctor1'] = np.where((np.isnan(d['B13_1'])==False) & (d['LEAVE_CAT']==2),d['doctor_need'],d['doctor_take'])
+d['doctor1'] = np.where((np.isnan(d['LEAVE_CAT'])==False) & (d['LEAVE_CAT']==2),d['doctor_need'],d['doctor_take'])
 d['doctor2'] = np.where((np.isnan(d['LEAVE_CAT'])==False) & ((d['LEAVE_CAT']==2) | (d['LEAVE_CAT']==4)),d['doctor_need'],d['doctor_take'])
 
 d['hospital1'] = np.where((np.isnan(d['LEAVE_CAT'])==False) & (d['LEAVE_CAT']==2),d['hospital_need'],d['hospital_take'])
@@ -244,9 +252,9 @@ d['freq_weight']  = np.round(d['weight'])
 # (3) taking or needing a leave
 
 # maternity disability
-d['take_matdis'] = np.where(((d['A5_1_CAT']==21)&(d['A11_1']==1)&(d['GENDER_CAT']==2)) | (d['A5_1_CAT_rev']==32),1,0)
+d['take_matdis'] = np.where(((d['A5_1_CAT']==21)&(d['A11_1']==1)&(d['GENDER_CAT']==2))&((d['A20']!=2) | (d['A20'].isna())) | (d['A5_1_CAT_rev']==32),1,0)
 d['take_matdis'] = np.where(np.isnan(d['take_matdis']),0,d['take_matdis'])
-d['take_matdis'] = np.where(np.isnan(d['A5_1_CAT']),np.nan,d['take_matdis'])
+d['take_matdis'] = np.where((np.isnan(d['A5_1_CAT'])) & (np.isnan(d['A5_2_CAT'])),np.nan,d['take_matdis'])
 d['take_matdis'] = np.where(np.isnan(d['take_matdis']) & ((d['LEAVE_CAT']==2) | (d['LEAVE_CAT']==3)),0,d['take_matdis'])
 
 d['need_matdis'] = np.where(((d['B6_1_CAT']==21)&(d['B12_1']==1)&(d['GENDER_CAT']==2)) | (d['B6_1_CAT_rev']==32),1,0)
@@ -258,7 +266,7 @@ d['type_matdis'] = np.where((d['take_matdis']==1) | (d['need_matdis']==1),1,0)
 d['type_matdis'] = np.where(np.isnan(d['take_matdis']) | np.isnan(d['need_matdis']),np.nan,d['type_matdis'])
 
 # new child/bond
-d['take_bond'] = np.where((d['A5_1_CAT']==21) & (np.isnan(d['A11_1']) | (d['GENDER_CAT']==1) | ((d['GENDER_CAT']==2) & (d['A11_1']==2) & (d['A5_1_CAT_rev']!=32))),1,0)
+d['take_bond'] = np.where((d['A5_1_CAT']==21) & ((np.isnan(d['A11_1'])) | (d['GENDER_CAT']==1) | ((d['GENDER_CAT']==2) & (d['A11_1']==2) & (d['A5_1_CAT_rev']!=32))) & ((d['A20']!=2) | (d['A20'].isna())), 1, 0)
 d['take_bond'] = np.where(np.isnan(d['A5_1_CAT']),np.nan,d['take_bond'])
 d['take_bond'] = np.where(np.isnan(d['take_bond']) & ((d['LEAVE_CAT']==2) | (d['LEAVE_CAT']==3)),0,d['take_bond'])
 
@@ -271,9 +279,14 @@ d['type_bond'] = np.where(np.isnan(d['take_bond']) | np.isnan(d['need_bond']),np
 
 # own health
 d['take_own'] = np.where(d['reason_take']==1,1,0)
-d['take_own'] = np.where(np.isnan(d['take_own']) & ((d['LEAVE_CAT']==1) | (d['LEAVE_CAT']==3)),0,d['take_own'])
+d['take_own'] = np.where((d['reason_take'].isna()), np.nan, d['take_own'])
+d['take_own'] = np.where((np.isnan(d['take_own'])) & ((d['LEAVE_CAT']==2) | (d['LEAVE_CAT']==3)),0,d['take_own'])
 
-d['need_own'] = np.where(d['B6_1_CAT']==1,1,0)
+d['need_own'] = np.where((d['B6_1_CAT']==1) | (d['B6_2_CAT']==1),1,0)
+d['need_own'] = np.where((d['B6_1_CAT'].isna()) & (d['B6_2_CAT'].isna()), np.nan, d['need_own'])
+    # multiple leaves - if one leave is Own the other NA, need_own is NA
+d['need_own'] = np.where((d['B6_1_CAT'].isna()) & (d['B6_2_CAT']!=1), np.nan, d['need_own'])
+d['need_own'] = np.where((d['B6_1_CAT']!=1) & (d['B6_2_CAT'].isna()), np.nan, d['need_own'])
 d['need_own'] = np.where(np.isnan(d['need_own']) & ((d['LEAVE_CAT']==1) | (d['LEAVE_CAT']==3)),0,d['need_own'])
 
 d['type_own'] = np.where((d['take_own']==1) | (d['need_own']==1),1,0)
@@ -281,9 +294,13 @@ d['type_own'] = np.where(np.isnan(d['take_own']) | np.isnan(d['need_own']),np.na
 
 #ill child
 d['take_illchild'] = np.where(d['reason_take']==11,1,0)
-d['take_illchild'] = np.where(np.isnan(d['take_illchild']) & ((d['LEAVE_CAT']==1) | (d['LEAVE_CAT']==3)),0,d['take_illchild'])
+d['take_illchild'] = np.where(d['reason_take'].isna(), np.nan, d['take_illchild'])
+d['take_illchild'] = np.where(np.isnan(d['take_illchild']) & ((d['LEAVE_CAT']==2) | (d['LEAVE_CAT']==3)),0,d['take_illchild'])
 
-d['need_illchild'] = np.where(d['B6_1_CAT']==11,1,0)
+d['need_illchild'] = np.where((d['B6_1_CAT']==11) | (d['B6_2_CAT']==11),1,0)
+    # multiple leaves - if one leave is not Illchild the other NA, need_illchild is NA
+d['need_illchild'] = np.where((d['B6_1_CAT'].isna()) & (d['B6_2_CAT']!=11), np.nan, d['need_illchild'])
+d['need_illchild'] = np.where((d['B6_1_CAT']!=11) & (d['B6_2_CAT'].isna()), np.nan, d['need_illchild'])
 d['need_illchild'] = np.where(np.isnan(d['need_illchild']) & ((d['LEAVE_CAT']==1) | (d['LEAVE_CAT']==3)),0,d['need_illchild'])
 
 d['type_illchild'] = np.where((d['take_illchild']==1) | (d['need_illchild']==1),1,0)
@@ -291,9 +308,11 @@ d['type_illchild'] = np.where(np.isnan(d['take_illchild']) | np.isnan(d['need_il
 
 #ill spouse
 d['take_illspouse'] = np.where(d['reason_take']==12,1,0)
+d['take_illspouse'] = np.where(d['reason_take'].isna(), np.nan, d['take_illspouse'])
 d['take_illspouse'] = np.where(np.isnan(d['take_illspouse']) & ((d['LEAVE_CAT']==2) | (d['LEAVE_CAT']==3)),0,d['take_illspouse'])
 
 d['need_illspouse'] = np.where(d['B6_1_CAT']==12,1,0)
+d['need_illspouse'] = np.where(d['B6_1_CAT'].isna(),np.nan,d['need_illspouse'])
 d['need_illspouse'] = np.where(np.isnan(d['need_illspouse']) & ((d['LEAVE_CAT']==1) | (d['LEAVE_CAT']==3)),0,d['need_illspouse'])
 
 d['type_illspouse'] = np.where((d['take_illspouse']==1) | (d['need_illspouse']==1),1,0)
@@ -301,13 +320,91 @@ d['type_illspouse'] = np.where(np.isnan(d['take_illspouse']) | np.isnan(d['need_
 
 #ill parent
 d['take_illparent'] = np.where(d['reason_take']==13,1,0)
+d['take_illparent'] = np.where(d['reason_take'].isna(), np.nan, d['take_illparent'])
 d['take_illparent'] = np.where(np.isnan(d['take_illparent']) & ((d['LEAVE_CAT']==2) | (d['LEAVE_CAT']==3)),0,d['take_illparent'])
 
 d['need_illparent'] = np.where(d['B6_1_CAT']==13,1,0)
+d['need_illparent'] = np.where(d['B6_1_CAT'].isna(),np.nan,d['need_illparent'])
 d['need_illparent'] = np.where(np.isnan(d['need_illparent']) & ((d['LEAVE_CAT']==1) | (d['LEAVE_CAT']==3)),0,d['need_illparent'])
 
 d['type_illparent'] = np.where((d['take_illparent']==1) | (d['need_illparent']==1),1,0)
 d['type_illparent'] = np.where(np.isnan(d['take_illparent']) | np.isnan(d['need_illparent']),np.nan,d['type_illparent'])
 
+# number of reasons leaves taken
+d['num_leaves_taken'] = d['A4a_CAT']
+d['num_leaves_taken'] = np.where(d['num_leaves_taken'].isna(), 0, d['num_leaves_taken'])
+
+# number of reasons leaves needed
+d['num_leaves_need'] = d['B5_CAT']
+d['num_leaves_need'] = np.where(d['num_leaves_need'].isna(), 0, d['num_leaves_need'])
+
+# leave length by leave type
+types = ['own', 'matdis', 'bond', 'illchild','illspouse', 'illparent']
+for t in types:
+    d['length_%s' % t] = np.where(d['take_%s' % t]==1, d['length'], 0)
+    d['length_%s' % t] = np.where(d['take_%s' % t].isna(), np.nan, d['length_%s' % t])
+
+
+# For now, force exactly 1 leave type on each taker/needer/dual, and set no leave type for employed only
+# We use 6 new 'type' indicators called type1_own, type1_matdis, etc.
+d['type_check'] = d[['type_own', 'type_matdis', 'type_bond',
+                     'type_illchild', 'type_illspouse', 'type_illparent']].apply(lambda x: sum(x), axis=1)
+    # initiate
+type1s = []
+types = []
+for r in ['own', 'matdis', 'bond', 'illchild','illspouse', 'illparent']:
+    d['type1_%s' % r] = np.nan
+    type1s.append('type1_%s' % r)
+    types.append('type_%s' % r)
+    # Employed only
+for r in ['own', 'matdis', 'bond', 'illchild','illspouse', 'illparent']:
+    d.loc[d['LEAVE_CAT']==3, 'type1_%s' % r] = 0
+    # Taker, Needer, and Dual
+        # type_check = np.nan, randomly draw from 6 types -- need to think carefully later
+        # type_check = 0, randomly draw from 6 types
+def draw_type():
+    _types = np.zeros(6)
+    idx = random.choice(range(6))
+    _types[idx]=1
+    return _types
+d.loc[d['type_check'] == 0, type1s] = d.loc[d['type_check'] == 0, type1s].apply(lambda x: draw_type(), axis=1)
+d.loc[d['type_check'].isna(), type1s] = d.loc[d['type_check'].isna(), type1s].apply(lambda x: draw_type(), axis=1)
+
+        # type_check = 1, set type1 = type
+for r in ['own', 'matdis', 'bond', 'illchild','illspouse', 'illparent']:
+    d.loc[d['type_check']==1, 'type1_%s' % r] = d.loc[d['type_check']==1, 'type_%s' % r]
+        # type_check > 1, reduce types randomly to exactly 1 left
+def reduce_type(types_m):
+    '''
+    types_m = list of 6 leave types, with multiple 1s
+    '''
+    idxs = [i for i, x in enumerate(types_m) if x==1]
+    idx_keep = random.choice(idxs) # reduce to idx_keep
+    _types = np.zeros(6)
+    _types[idx_keep] = 1
+    return _types
+type1s_r = d.loc[d['type_check'] >= 2, types].apply(lambda x: reduce_type(x), axis=1)
+type1s_r.columns = type1s # rename cols to 'type1_own' etc. so d.loc can set value properly
+d.loc[d['type_check'] >= 2, type1s] = type1s_r
+del d['type_check']
+# proportion of pay received from employer (mid point of ranges provided in FMLA)
+d['prop_pay'] = np.where(d['A50']==1, 0.125, np.nan)
+d['prop_pay'] = np.where(d['A50']==2, 0.375, d['prop_pay'])
+d['prop_pay'] = np.where(d['A50']==3, 0.5, d['prop_pay'])
+d['prop_pay'] = np.where(d['A50']==4, 0.625, d['prop_pay'])
+d['prop_pay'] = np.where(d['A50']==5, 0.875, d['prop_pay'])
+d['prop_pay'] = np.where(d['A49']==1, 1, d['prop_pay'])
+d['prop_pay'] = np.where(d['A45']==2, 0, d['prop_pay'])
+
+# Benefits received as proportion of pay
+# baseline is employer-provided pay: starting at 0, will be imputed
+
+d['benefit_prop'] = 0
+# Leave Program Participation
+# baseline is absence of program, so this will start as a nonparticipant
+d['particip'] = 0
+# Cost to program as proportion of pay
+# baseline is 0
+d['cost_prop'] = 0
 # Save data
-d.to_csv("data/fmla_clean_2012.csv", index=False, header=True)
+d.to_csv("data/fmla_2012/fmla_clean_2012.csv", index=False, header=True)
