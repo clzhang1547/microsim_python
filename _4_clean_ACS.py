@@ -26,13 +26,13 @@ t0 = time()
 # -------------------------- #
 
 # Load data
-st = 'ca'
-d_hh = pd.read_csv("./data/acs/ss15h%s.csv" % st)
+st = 'ma'
+d_hh = pd.read_csv("C:/workfiles/Microsimulation/git/large_data_files/ss15h%s.csv" % st)
 
 # Create Variables
 d_hh["nochildren"]  = pd.get_dummies(d_hh["FPARC"])[4]
 d_hh['faminc'] = d_hh['FINCP']*d_hh['ADJINC'] / 1042852 # adjust to 2012 dollars to conform with FMLA 2012 data
-d_hh.loc[d_hh['faminc']<=0, 'faminc'] = 0.01 # force non-positive income to be epsilon to get meaningful log-income
+d_hh.loc[(d_hh['faminc']<=0), 'faminc'] = 0.01 # force non-positive income to be epsilon to get meaningful log-income
 d_hh["lnfaminc"]    = np.log(d_hh["faminc"])
 
 # Number of dependents
@@ -48,7 +48,7 @@ dout = pd.DataFrame([])
 ichunk = 1
 
 # Load data
-for d in pd.read_csv("./data/acs/ss15p%s.csv" % st, chunksize=chunk_size):
+for d in pd.read_csv("C:/workfiles/Microsimulation/git/large_data_files/ss15p%s.csv" % st, chunksize=chunk_size):
 
     # Merge with the household level variables
     d = pd.merge(d,d_hh[['SERIALNO', 'nochildren', 'faminc','lnfaminc','PARTNER', 'ndep_kid', 'ndep_old']],
@@ -67,8 +67,8 @@ for d in pd.read_csv("./data/acs/ss15p%s.csv" % st, chunksize=chunk_size):
     d["divorced"]       = pd.get_dummies(d["MAR"])[3]
     d["separated"]      = pd.get_dummies(d["MAR"])[4]
     d["nevermarried"]   = pd.get_dummies(d["MAR"])[5]
-        # use PARTNER in household data to override marital info in personal data
-    d['partner'] = 1 - pd.get_dummies(d['PARTNER'])[0] # PARTNER=0: no partner in household
+        # use PARTNER in household data to tease out unmarried partners
+    d['partner'] = np.where((d['PARTNER']==1) | (d['PARTNER']==2) | (d['PARTNER']==3) | (d['PARTNER']==4), 1, 0)
     for m in ['married', 'widowed', 'divorced', 'separated', 'nevermarried']:
         d.loc[d['partner']==1, m] = 0
 
@@ -77,28 +77,30 @@ for d in pd.read_csv("./data/acs/ss15p%s.csv" % st, chunksize=chunk_size):
     d["agesq"]          = d["age"]**2
 
     # Educational level
-    d['ltHS']    = np.where(d['SCHL']<=11,1,0)
-    d['someHS']  = np.where((d['SCHL']>=12) & (d['SCHL']<=15),1,0)
-    d['HSgrad']  = np.where((d['SCHL']>=16) & (d['SCHL']<=17),1,0)
-    d['someCol']  = np.where((d['SCHL']>=18) & (d['SCHL']<=20),1,0)
-    d["BA"]      = np.where(d['SCHL']==21,1,0)
-    d["GradSch"]  = np.where(d['SCHL']>=22,1,0)
+    d['sku'] = np.where(d['SCHL'].isna(), 0, d['SCHL'])
+    d['ltHS']    = np.where(d['sku']<=11,1,0)
+    d['someHS']  = np.where((d['sku']>=12) & (d['sku']<=15),1,0)
+    d['HSgrad']  = np.where((d['sku']>=16) & (d['sku']<=17),1,0)
+    d['someCol']  = np.where((d['sku']>=18) & (d['sku']<=20),1,0)
+    d["BA"]      = np.where(d['sku']==21,1,0)
+    d["GradSch"]  = np.where(d['sku']>=22,1,0)
 
-    d["noHSdegree"]  = np.where(d['SCHL']<=15,1,0)
-    d["BAplus"]  = np.where(d['SCHL']>=21,1,0)
+    d["noHSdegree"]  = np.where(d['sku']<=15,1,0)
+    d["BAplus"]  = np.where(d['sku']>=21,1,0)
         # variables for imputing hourly status, using CPS estimates from original model
-    d["maplus"]  = np.where(d['SCHL']>=22,1,0)
+    d["maplus"]  = np.where(d['sku']>=22,1,0)
     d["ba"]      = d['BA']
 
     # race
-
-    d['white']= d['RAC1P'].apply(lambda x: int(x==1))
-    d['black']= d['RAC1P'].apply(lambda x: int(x==2))
-    d['asian']= d['RAC1P'].apply(lambda x: int(x==6))
-    d['hisp']= d['HISP'].apply(lambda x: int(x!=1))
-    d['other'] = d[['RAC1P', 'hisp']].apply(lambda x: int(x[0]!=1 and x[0]!=2 and x[0]!=6 and x[1]!=1), axis=1)
-
-    d['native'] = d['RAC1P'].apply(lambda x: int(x==3 or x==4 or x==5 or x==7))
+    d['hisp'] = np.where(d['HISP']>=2, 1, 0)
+    d['white'] = np.where((d['hisp']==0) & (d['RAC1P']==1), 1, 0)
+    d['black'] = np.where((d['hisp']==0) & (d['RAC1P']==2), 1, 0)
+    d['asian'] = np.where((d['hisp']==0) & (d['RAC1P']==6), 1, 0)
+    d['native'] = np.where((d['hisp'] == 0) & ((d['RAC1P'] == 3) |
+                                               (d['RAC1P'] == 4) |
+                                               (d['RAC1P'] == 5) |
+                                               (d['RAC1P'] == 7)), 1, 0)
+    d['other'] = np.where((d['hisp']==0) & (d['white']==0) & (d['black']==0) & (d['asian']==0) & (d['native']==0), 1, 0)
 
     # Employed
     d['employed'] = np.where((d['ESR']== 1) |
@@ -118,10 +120,16 @@ for d in pd.read_csv("./data/acs/ss15p%s.csv" % st, chunksize=chunk_size):
         5: 20,
         6: 7
     }
-    d['wks'] = d['WKW'].map(dict_wks)
-
-    # Total wage past 12m, adjusted to 2012
+    d['weeks_worked_cat'] = d['WKW'].map(dict_wks)
+    d['weeks_worked_cat'] = np.where(d['weeks_worked_cat'].isna(), 0, d['weeks_worked_cat'])
+    # Total wage past 12m, adjusted to 2012, and its log
     d['wage12'] = d['WAGP'] *d['ADJINC'] / 1042852
+    d['lnearn'] = np.nan
+    d.loc[d['wage12']>0, 'lnearn'] = d.loc[d['wage12']>0, 'wage12'].apply(lambda x: np.log(x))
+
+    # health insurance from employer
+    d['hiemp'] = np.where(d['HINS1']==1, 1, 0)
+    d['hiemp'] = np.where(d['HINS1'].isna(), np.nan, d['hiemp'])
 
     # Employment at government
         # missing = age<16, or NILF over 5 years, or never worked
@@ -132,8 +140,30 @@ for d in pd.read_csv("./data/acs/ss15p%s.csv" % st, chunksize=chunk_size):
     d['empgov_loc'] = np.where(d['COW']==3, 1, 0)
     d['empgov_loc'] = np.where(np.isnan(d['COW']),np.nan,d['empgov_loc'])
 
+    # Presence of children for females
+    d['fem_cu6'] = np.where(d['PAOC']==1, 1, 0)
+    d['fem_c617'] = np.where(d['PAOC']==2, 1, 0)
+    d['fem_cu6and617'] = np.where(d['PAOC']==3, 1, 0)
+    d['fem_nochild'] = np.where(d['PAOC']==4, 1, 0)
+    for x in ['fem_cu6','fem_c617','fem_cu6and617','fem_nochild']:
+        d.loc[d['PAOC'].isna(), x] = np.nan
 
     # Occupation
+
+    # make numeric OCCP = OCCP10 if ACS 2011-2015, or OCCP12 if ACS 2012-2016
+    if 'N.A.' in d['OCCP12'].value_counts().index:
+        d.loc[d['OCCP12']=='N.A.', 'OCCP12'] = d.loc[d['OCCP12']=='N.A.', 'OCCP12'].apply(lambda x: np.nan)
+    d.loc[d['OCCP12'].notna(), 'OCCP12'] = d.loc[d['OCCP12'].notna(), 'OCCP12'].apply(lambda x: int(x))
+
+    if 'N.A.' in d['OCCP10'].value_counts().index:
+        d.loc[d['OCCP10']=='N.A.', 'OCCP10'] = d.loc[d['OCCP10']=='N.A.', 'OCCP10'].apply(lambda x: np.nan)
+    d.loc[d['OCCP10'].notna(), 'OCCP10'] = d.loc[d['OCCP10'].notna(), 'OCCP10'].apply(lambda x: int(x))
+
+    d['OCCP'] = np.nan
+    d['OCCP'] = np.where(d['OCCP12'].notna(), d['OCCP12'], d['OCCP'])
+    d['OCCP'] = np.where((d['OCCP'].isna()) & (d['OCCP12'].isna()) & (d['OCCP10'].notna()), d['OCCP10'], d['OCCP'])
+
+
     d['occ_1']=0
     d['occ_2']=0
     d['occ_3']=0
@@ -145,21 +175,19 @@ for d in pd.read_csv("./data/acs/ss15p%s.csv" % st, chunksize=chunk_size):
     d['occ_9']=0
     d['occ_10']=0
     d['maj_occ']=0
-    try:
-        d.loc[d['OCCP10']=='N.A.', 'OCCP10'] = np.nan
-    except:
-        TypeError # happens when testing with short person files with no string type 'N.A.' but all np.nan
-    d.loc[d['OCCP10'].isnull()==False, 'OCCP10'] = d.loc[d['OCCP10'].isnull()==False, 'OCCP10'].apply(lambda x: int(x))
-    d.loc[(d['OCCP10']>=10) & (d['OCCP10']<=950), 'occ_1'] =1
-    d.loc[(d['OCCP10']>=1000) & (d['OCCP10']<=3540), 'occ_2'] =1
-    d.loc[(d['OCCP10']>=3600) & (d['OCCP10']<=4650), 'occ_3'] =1
-    d.loc[(d['OCCP10']>=4700) & (d['OCCP10']<=4965), 'occ_4'] =1
-    d.loc[(d['OCCP10']>=5000) & (d['OCCP10']<=5940), 'occ_5'] =1
-    d.loc[(d['OCCP10']>=6000) & (d['OCCP10']<=6130), 'occ_6'] =1
-    d.loc[(d['OCCP10']>=6200) & (d['OCCP10']<=6940), 'occ_7'] =1
-    d.loc[(d['OCCP10']>=7000) & (d['OCCP10']<=7630), 'occ_8'] =1
-    d.loc[(d['OCCP10']>=7700) & (d['OCCP10']<=8965), 'occ_9'] =1
-    d.loc[(d['OCCP10']>=9000) & (d['OCCP10']<=9750), 'occ_10'] =1
+    d.loc[(d['OCCP']>=10) & (d['OCCP']<=950), 'occ_1'] =1
+    d.loc[(d['OCCP']>=1000) & (d['OCCP']<=3540), 'occ_2'] =1
+    d.loc[(d['OCCP']>=3600) & (d['OCCP']<=4650), 'occ_3'] =1
+    d.loc[(d['OCCP']>=4700) & (d['OCCP']<=4965), 'occ_4'] =1
+    d.loc[(d['OCCP']>=5000) & (d['OCCP']<=5940), 'occ_5'] =1
+    d.loc[(d['OCCP']>=6000) & (d['OCCP']<=6130), 'occ_6'] =1
+    d.loc[(d['OCCP']>=6200) & (d['OCCP']<=6940), 'occ_7'] =1
+    d.loc[(d['OCCP']>=7000) & (d['OCCP']<=7630), 'occ_8'] =1
+    d.loc[(d['OCCP']>=7700) & (d['OCCP']<=8965), 'occ_9'] =1
+    d.loc[(d['OCCP']>=9000) & (d['OCCP']<=9750), 'occ_10'] =1
+        # make sure occ_x gets nan if OCCP code is nan
+    for x in range(1, 11):
+        d.loc[d['OCCP'].isna(), 'occ_%s' % x] = np.nan
 
     # Industry
     d['ind_1']=0
@@ -188,7 +216,9 @@ for d in pd.read_csv("./data/acs/ss15p%s.csv" % st, chunksize=chunk_size):
     d.loc[(d['INDP']>=8560) & (d['INDP']<=8690), 'ind_11'] =1
     d.loc[(d['INDP']>=8770) & (d['INDP']<=9290), 'ind_12'] =1
     d.loc[(d['INDP']>=9370) & (d['INDP']<=9590), 'ind_13'] =1
-
+        # make sure ind_x gets nan if INDP code is nan
+    for x in range(1, 14):
+        d.loc[d['INDP'].isna(), 'ind_%s' % x] = np.nan
     # -------------------------- #
     # Remove ineligible workers
     # -------------------------- #
@@ -232,18 +262,22 @@ for d in pd.read_csv("./data/acs/ss15p%s.csv" % st, chunksize=chunk_size):
     # Save the resulting dataset
     # -------------------------- #
     cols = ['SERIALNO', 'PWGTP', 'ST',
-    'hourly',
     'employed', 'empgov_fed','empgov_st','empgov_loc',
-    'wkhours', 'wks', 'wage12',
-    'age', 'agesq',
-    'male',
+    'wkhours', 'weeks_worked_cat', 'wage12', 'lnearn','hiemp',
+    'a_age','age', 'agesq',
+    'male','female',
     'nochildren', 'ndep_kid', 'ndep_old',
     'ltHS', 'someHS', 'HSgrad', 'someCol', 'BA', 'GradSch', 'noHSdegree', 'BAplus' ,
     'faminc', 'lnfaminc',
     'married', 'partner', 'separated', 'divorced', 'widowed', 'nevermarried',
-    'native', 'asian', 'black', 'white', 'other', 'hisp',
+    'asian', 'black', 'white', 'native','other', 'hisp',
+    'fem_cu6','fem_cu6and617','fem_c617','fem_nochild',
     'ESR', 'COW' # original ACS vars for restricting samples later
             ]
+    cols += ['ind_%s' % x for x in range(1, 14)]
+    cols += ['OCCP'] + ['occ_%s' % x for x in range(1, 11)]
+    # cols += ['hourly'] # optional, move imputation of hourly to somewhere else?
+
     d_reduced = d[cols]
     dout = dout.append(d_reduced)
     print('ACS data cleaned for chunk %s of personal data...' % ichunk)
@@ -255,5 +289,5 @@ dout.to_csv("./data/acs/ACS_cleaned_forsimulation_%s.csv" % st, index=False, hea
 # d2.to_csv("./data/acs/ACS_cleaned_forsimulation_%s_wage.csv" % st, index=False, header=True)
 
 t1 = time()
-print('ACS data cleaning finished. Time elapsed = %s' % (t1-t0))
+print('ACS data cleaning finished for state %s. Time elapsed = %s' % (st.upper(), (t1-t0)))
 
