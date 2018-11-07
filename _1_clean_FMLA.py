@@ -6,7 +6,6 @@ for behavioral estimation
 # Housekeeping
 import pandas as pd
 import numpy as np
-import random
 # Read in FMLA data
 d = pd.read_csv("data/fmla_2012/fmla_2012_employee_restrict_puf.csv")
 
@@ -201,6 +200,9 @@ d['doctor2'] = np.where((np.isnan(d['LEAVE_CAT'])==False) & ((d['LEAVE_CAT']==2)
 d['hospital1'] = np.where((np.isnan(d['LEAVE_CAT'])==False) & (d['LEAVE_CAT']==2),d['hospital_need'],d['hospital_take'])
 d['hospital2'] = np.where((np.isnan(d['LEAVE_CAT'])==False) & ((d['LEAVE_CAT']==2) | (d['LEAVE_CAT']==4)),d['hospital_need'],d['hospital_take'])
 
+d['doctor'] = d[['doctor_need', 'doctor_take']].apply(lambda x: max(x[0], x[1]), axis=1)
+d['hospital'] = d[['hospital_need', 'hospital_take']].apply(lambda x: max(x[0], x[1]), axis=1)
+
 # length of leave for most recent leave
 d['length']     = np.where((np.isnan(d['A20'])==False) & (d['A20']==2),d['A19_2_CAT_rev'],d['A19_1_CAT_rev'])
 d['lengthsq']   = np.array(d['length'])**2
@@ -222,6 +224,14 @@ d['recStateDL'] = np.where(np.isnan(d['recStateDL']) & (d['anypay']==0),0,d['rec
 
 d['recStatePay'] = np.where((d['recStateFL']==1) | (d['recStateDL']==1),1,0)
 d['recStatePay'] = np.where(np.isnan(d['recStateFL']) | np.isnan(d['recStateDL']),np.nan,d['recStatePay'])
+
+# --------------------------
+# Leave taking variables
+# --------------------------
+
+# leave taken
+d['taker'] = np.where((d['LEAVE_CAT']==1) | (d['LEAVE_CAT']==4), 1, 0)
+d['needer'] = np.where((d['LEAVE_CAT']==2) | (d['LEAVE_CAT']==4), 1, 0)
 
 # fully paid
 d['fullyPaid'] = np.where(d['A49']==1,1,0)
@@ -344,49 +354,22 @@ for t in types:
     d['length_%s' % t] = np.where(d['take_%s' % t]==1, d['length'], 0)
     d['length_%s' % t] = np.where(d['take_%s' % t].isna(), np.nan, d['length_%s' % t])
 
+# most recent leave type in 1 col
 
-# For now, force exactly 1 leave type on each taker/needer/dual, and set no leave type for employed only
-# We use 6 new 'type' indicators called type1_own, type1_matdis, etc.
-d['type_check'] = d[['type_own', 'type_matdis', 'type_bond',
-                     'type_illchild', 'type_illspouse', 'type_illparent']].apply(lambda x: sum(x), axis=1)
-    # initiate
-type1s = []
-types = []
-for r in ['own', 'matdis', 'bond', 'illchild','illspouse', 'illparent']:
-    d['type1_%s' % r] = np.nan
-    type1s.append('type1_%s' % r)
-    types.append('type_%s' % r)
-    # Employed only
-for r in ['own', 'matdis', 'bond', 'illchild','illspouse', 'illparent']:
-    d.loc[d['LEAVE_CAT']==3, 'type1_%s' % r] = 0
-    # Taker, Needer, and Dual
-        # type_check = np.nan, randomly draw from 6 types -- need to think carefully later
-        # type_check = 0, randomly draw from 6 types
-def draw_type():
-    _types = np.zeros(6)
-    idx = random.choice(range(6))
-    _types[idx]=1
-    return _types
-d.loc[d['type_check'] == 0, type1s] = d.loc[d['type_check'] == 0, type1s].apply(lambda x: draw_type(), axis=1)
-d.loc[d['type_check'].isna(), type1s] = d.loc[d['type_check'].isna(), type1s].apply(lambda x: draw_type(), axis=1)
+d['type_recent'] = np.nan
+d.loc[(d['type_recent'].isna()) & (d['reason_take'] == 1), 'type_recent'] = 'own'
+d.loc[(d['type_recent'].isna()) & (d['reason_take'] == 11), 'type_recent'] = 'illchild'
+d.loc[(d['type_recent'].isna()) & (d['reason_take'] == 12), 'type_recent'] = 'illspouse'
+d.loc[(d['type_recent'].isna()) & (d['reason_take'] == 13), 'type_recent'] = 'illparent'
+d.loc[(d['type_recent'].isna()) & (d['type_matdis'] == 1), 'type_recent'] = 'matdis'
+d.loc[(d['type_recent'].isna()) & (d['type_bond'] == 1), 'type_recent'] = 'bond'
 
-        # type_check = 1, set type1 = type
-for r in ['own', 'matdis', 'bond', 'illchild','illspouse', 'illparent']:
-    d.loc[d['type_check']==1, 'type1_%s' % r] = d.loc[d['type_check']==1, 'type_%s' % r]
-        # type_check > 1, reduce types randomly to exactly 1 left
-def reduce_type(types_m):
-    '''
-    types_m = list of 6 leave types, with multiple 1s
-    '''
-    idxs = [i for i, x in enumerate(types_m) if x==1]
-    idx_keep = random.choice(idxs) # reduce to idx_keep
-    _types = np.zeros(6)
-    _types[idx_keep] = 1
-    return _types
-type1s_r = d.loc[d['type_check'] >= 2, types].apply(lambda x: reduce_type(x), axis=1)
-type1s_r.columns = type1s # rename cols to 'type1_own' etc. so d.loc can set value properly
-d.loc[d['type_check'] >= 2, type1s] = type1s_r
-del d['type_check']
+# multiple leaver (taker/needer)
+d['multiple'] = np.nan
+d['multiple'] = np.where(d['LEAVE_CAT']!=3, 0, d['multiple'])
+d['multiple'] = np.where((d['A4_CAT'].notna()) & (d['A4_CAT']>=2), 1, d['multiple'])
+d['multiple'] = np.where((d['B5b_CAT'].notna()) & (d['B5b_CAT']>=2), 1, d['multiple'])
+
 # proportion of pay received from employer (mid point of ranges provided in FMLA)
 d['prop_pay'] = np.where(d['A50']==1, 0.125, np.nan)
 d['prop_pay'] = np.where(d['A50']==2, 0.375, d['prop_pay'])
@@ -406,5 +389,53 @@ d['particip'] = 0
 # Cost to program as proportion of pay
 # baseline is 0
 d['cost_prop'] = 0
+
+# -------------
+# The rest of the code in this function creates a variable 'resp_len' 
+# which will flag 0/1 for a worker that is likely to a more favourable leave program
+# by increasing leave length. It is used to help simulate counterfactual leave
+# for a program that increases wage replacement
+# -------------
+
+# Initiate
+d['resp_len'] = np.nan
+
+# LEAVE_CAT: employed only
+# EMPLOYED ONLY workers have no need and take no leave, would not respond anyway
+d.loc[d['LEAVE_CAT'] == 3, 'resp_len'] = 0
+
+# A55 asks if worker would take longer leave if paid?
+d.loc[(d['resp_len'].isna()) & (d['A55'] == 2), 'resp_len'] = 0
+d.loc[(d['resp_len'].isna()) & (d['A55'] == 1), 'resp_len'] = 1
+
+# The following variables indicate whether leave was cut short for financial issues
+# A23c: unable to afford unpaid leave due to leave taking
+# A53g: cut leave time short to cover lost wages
+# A62a: return to work because cannot afford more leaves
+# B15_1_CAT, B15_2_CAT: can't afford unpaid leave
+d.loc[(d['resp_len'].isna()) & ((d['A23c'] == 1) |
+                                  (d['A53g'] == 1) |
+                                  (d['A62a'] == 1) |
+                                  (d['B15_1_CAT'] == 5) |
+                                  (d['B15_2_CAT'] == 5)), 'resp_len'] = 1
+
+# Assume all takers/needers with ongoing condition are 'cornered' and would respond with longer leaves
+# A10_1, A10_2: regular/ongoing condition, takers and dual
+# B11_1, B11_2: regular/ongoing condition, needers and dual
+d.loc[(d['resp_len'].isna()) & (d['A10_1'] == 2) | (d['A10_1'] == 3)
+       | (d['B11_1'] == 2) | (d['B11_1'] == 3), 'resp_len'] = 1
+
+# B15_1_CAT and B15_2_CAT only has one group (cod = 5) identified as constrained by unaffordability
+# These financially-constrained workers were assigned resp_len=1 above, all other cornered workers would not respond
+# Check reasons of no leave among rest: d[d['resp_len'].isna()].B15_1_CAT.value_counts().sort_index()
+# all reasons unsolved by replacement generosity
+d.loc[(d['resp_len'].isna()) & (d['B15_1_CAT'].notna()), 'resp_len'] = 0
+d.loc[(d['resp_len'].isna()) & (d['B15_2_CAT'].notna()), 'resp_len'] = 0
+
+# Check LEAVE_CAT of rest: d[d['resp_len'].isna()]['LEAVE_CAT'].value_counts().sort_index()
+# 267 takers and 3 needers
+# with no evidence in data of need solvable / unsolvable by $, assume solvable to be conservative
+d.loc[d['resp_len'].isna(), 'resp_len'] = 1
+
 # Save data
 d.to_csv("data/fmla_2012/fmla_clean_2012.csv", index=False, header=True)

@@ -1,12 +1,21 @@
 from tkinter import *
-from tkinter import ttk, filedialog
+from tkinter import ttk, filedialog, messagebox
 import os
+import sys
 from _5_simulation_engine import SimulationEngine
 import collections
+import matplotlib
+matplotlib.use("TkAgg")
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
 
 
-class MicrosimGIU:
-    def __init__(self):
+version = sys.version_info
+
+class MicrosimGIU(Tk):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
         # Some data structures and settings that will be used throughout the code
         self.spreadsheet_ftypes = [('All', '*.xlsx; *.xls; *.csv'), ('Excel', '*.xlsx'),
                                    ('Excel 97-2003', '*.xls'), ('CSV', '*.csv')]
@@ -20,9 +29,10 @@ class MicrosimGIU:
         self.dark_bg = '#333333'
         self.light_font = '#f2f2f2'
         self.notebook_bg = '#fcfcfc'
-
-        # Create root widget. Everything will go in here.
-        self.root = Tk()
+        self.theme_color = '#0074BF'
+        self.default_settings = Settings()
+        self.error_tooltips = []
+        self.cwd = os.getcwd()
 
         # Edit the style for ttk widgets. These new styles are given their own names, which will have to be provided
         # by the widgets in order to be used.
@@ -32,22 +42,24 @@ class MicrosimGIU:
         style.configure('MSNotebook.TNotebook', background=self.notebook_bg)
         style.configure('MSNotebook.TNotebook.Tab', font='-size 12')
         style.configure('MSLabelframe.TLabelframe', background=self.notebook_bg)
-        style.configure('MSLabelframe.TLabelframe.Label', background=self.notebook_bg, font='-size 12')
+        style.configure('MSLabelframe.TLabelframe.Label', background=self.notebook_bg, foreground=self.theme_color,
+                        font='-size 12')
 
-        self.root.title('Paid Leave Micro-Simulator')  # Add title to window
-        self.root.option_add('*Font', '-size 12')  # Set default font
-        # self.root.resizable(False, False)  # Prevent window from being resized
-        self.root.bind("<MouseWheel>", self.scroll)  # Bind mouse wheel action to scroll function
+        self.title('Paid Leave Micro-Simulator')  # Add title to window
+        self.option_add('*Font', '-size 12')  # Set default font
+        # self.resizable(False, False)  # Prevent window from being resized
+        self.bind("<MouseWheel>", self.scroll)  # Bind mouse wheel action to scroll function
         self.icon = PhotoImage(file='impaq_logo.gif')
-        self.root.tk.call('wm', 'iconphoto', self.root._w, self.icon)
+        self.tk.call('wm', 'iconphoto', self._w, self.icon)
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
 
         # The content frame will hold all widgets
-        self.content = Frame(self.root, padx=15, pady=15, bg=self.dark_bg)
+        self.content = Frame(self, padx=15, pady=15, bg=self.dark_bg)
         # This frame holds general settings
         self.main_frame = Frame(self.content, bg=self.dark_bg)
         # This notebook will have three tabs for the program, population, and simulation settings
         self.settings_frame = ttk.Notebook(self.content, style='MSNotebook.TNotebook')
-        self.run_button = MSButton(self.content, text="Run", command=self.run_simulation)  # Click to run
+        self.run_button = MSRunButton(self.content, text="Run", command=self.run_simulation)
 
         # In order to control scrolling in the right notebook tab, we need to keep track of the tab that
         # is currently visible. Whenever a tab is clicked, update this value.
@@ -94,29 +106,42 @@ class MicrosimGIU:
         self.detail = IntVar()
         self.state = StringVar()
         self.simulation_method = StringVar()
-        self.benefit_effect = BooleanVar(value=False)
-        self.calibrate = BooleanVar(value=True)
-        self.clone_factor = IntVar(value=1)
-        self.se_analysis = BooleanVar(value=False)
-        self.extend = BooleanVar(value=False)
-        self.fmla_protection_constraint = BooleanVar(value=False)
-        self.replacement_ratio = DoubleVar(value=0.5)
-        self.government_employees = BooleanVar(value=True)
-        self.needers_fully_participate = BooleanVar(value=False)
-        self.random_seed = BooleanVar(value=False)
-        self.self_employed = BooleanVar(value=False)
-        self.state_of_work = BooleanVar(value=False)
-        self.top_off_rate = DoubleVar(value=0)
-        self.top_off_min_length = IntVar(value=0)
-        self.weekly_ben_cap = IntVar(value=1200)
-        self.weight_factor = IntVar(value=1)
-        self.eligible_earnings = IntVar(value=3000)
-        self.eligible_weeks = IntVar(value=52)
-        self.eligible_hours = IntVar(value=1250)
-        self.eligible_size = IntVar(value=50)
-        self.payroll_tax = DoubleVar(value=0)
-        self.benefits_tax = BooleanVar(value=False)
-        self.average_state_tax = DoubleVar(value=0)
+        self.benefit_effect = BooleanVar(value=self.default_settings.benefit_effect)
+        self.calibrate = BooleanVar(value=self.default_settings.calibrate)
+        self.clone_factor = IntVar(value=self.default_settings.clone_factor)
+        self.se_analysis = BooleanVar(value=self.default_settings.se_analysis)
+        self.extend = BooleanVar(value=self.default_settings.extend)
+        self.fmla_protection_constraint = BooleanVar(value=self.default_settings.fmla_protection_constraint)
+        self.replacement_ratio = DoubleVar(value=self.default_settings.replacement_ratio)
+        self.government_employees = BooleanVar(value=self.default_settings.government_employees)
+        self.needers_fully_participate = BooleanVar(value=self.default_settings.needers_fully_participate)
+        self.random_seed = BooleanVar(value=self.default_settings.random_seed)
+        self.self_employed = BooleanVar(value=self.default_settings.self_employed)
+        self.state_of_work = BooleanVar(value=self.default_settings.state_of_work)
+        self.top_off_rate = DoubleVar(value=self.default_settings.top_off_rate)
+        self.top_off_min_length = IntVar(value=self.default_settings.top_off_min_length)
+        self.weekly_ben_cap = IntVar(value=self.default_settings.weekly_ben_cap)
+        self.weight_factor = IntVar(value=self.default_settings.weight_factor)
+        self.eligible_earnings = IntVar(value=self.default_settings.eligible_earnings)
+        self.eligible_weeks = IntVar(value=self.default_settings.eligible_weeks)
+        self.eligible_hours = IntVar(value=self.default_settings.eligible_hours)
+        self.eligible_size = IntVar(value=self.default_settings.eligible_size)
+        self.payroll_tax = DoubleVar(value=self.default_settings.payroll_tax)
+        self.benefits_tax = BooleanVar(value=self.default_settings.benefits_tax)
+        self.average_state_tax = DoubleVar(value=self.default_settings.average_state_tax)
+        self.max_taxable_earnings_per_person = IntVar(self.default_settings.max_taxable_earnings_per_person)
+        self.total_taxable_earnings = IntVar(value=self.default_settings.total_taxable_earnings)
+
+        # When the file location entries are modified, check to see if they all have some value
+        # If they do, enable the run button
+        if version[1] < 6:
+            self.fmla_file.trace("w", self.check_file_entries)
+            self.acs_file.trace("w", self.check_file_entries)
+            self.output_directory.trace("w", self.check_file_entries)
+        else:
+            self.fmla_file.trace_add("write", self.check_file_entries)
+            self.acs_file.trace_add("write", self.check_file_entries)
+            self.output_directory.trace_add("write", self.check_file_entries)
 
         # Below is the code for creating the widgets for user inputs and labels. Entries, comboboxes, and checkboxes
         # are used. We also create tooltips to show when hovering the cursor over each input
@@ -126,6 +151,7 @@ class MicrosimGIU:
         self.fmla_label = Label(self.main_frame, text="FMLA File:", bg=self.dark_bg, fg=self.light_font, anchor=N)
         self.fmla_input = MSEntry(self.main_frame, textvariable=self.fmla_file, width=45)
         self.fmla_button = MSButton(self.main_frame, text="Browse", command=lambda: self.browse_file(self.fmla_input))
+        self.fmla_button.config(width=None)
         CreateToolTip(self.fmla_label, 'A CSV or Excel file that contains leave taking data to use to train '
                                        'model. This should be FMLA survey data.')
 
@@ -155,7 +181,7 @@ class MicrosimGIU:
         self.state_label = Label(self.main_frame, text='State:', bg=self.dark_bg, fg=self.light_font)
         self.state_input = ttk.Combobox(self.main_frame, textvariable=self.state, state="readonly", width=5,
                                         values=self.states)
-        self.state_input.current(0)
+        self.state_input.current(self.states.index('MA'))
         CreateToolTip(self.state_label, 'The state that will be used to estimate program cost. Only people '
                                         'from this state will be chosen from the input and output files.')
 
@@ -168,46 +194,51 @@ class MicrosimGIU:
 
         # ------------------------------------------ Program Settings ------------------------------------------------
 
-        self.eligibility_frame = ttk.Labelframe(self.program_frame, text="Eligibility Rules:",
+        self.eligibility_frame_label = ttk.Label(self.program_frame, text='Eligibility Rules:',
+                                                 style='MSLabelframe.TLabelframe.Label')
+        self.eligibility_frame = ttk.Labelframe(self.program_frame, labelwidget=self.eligibility_frame_label,
                                                 style='MSLabelframe.TLabelframe')
         self.eligible_earnings_label = Label(self.eligibility_frame, text="Earnings", bg=self.notebook_bg)
-        self.eligible_earnings_input = ttk.Entry(self.eligibility_frame, textvariable=self.eligible_earnings,
-                                                 justify='center', width=15)
-        self.eligible_weeks_label = Label(self.eligibility_frame, text="Weeks", bg=self.notebook_bg)
-        self.eligible_weeks_input = ttk.Entry(self.eligibility_frame, textvariable=self.eligible_weeks,
-                                              justify='center', width=15)
-        self.eligible_hours_label = Label(self.eligibility_frame, text="Hours", bg=self.notebook_bg)
-        self.eligible_hours_input = ttk.Entry(self.eligibility_frame, textvariable=self.eligible_hours,
-                                              justify='center', width=15)
-        self.eligible_size_label = Label(self.eligibility_frame, text="Employer Size", bg=self.notebook_bg)
-        self.eligible_size_input = ttk.Entry(self.eligibility_frame, textvariable=self.eligible_size,
+        self.eligible_earnings_input = Entry(self.eligibility_frame, textvariable=self.eligible_earnings,
                                              justify='center', width=15)
-        CreateToolTip(self.eligibility_frame,
+        self.eligible_weeks_label = Label(self.eligibility_frame, text="Weeks", bg=self.notebook_bg)
+        self.eligible_weeks_input = Entry(self.eligibility_frame, textvariable=self.eligible_weeks,
+                                          justify='center', width=15)
+        self.eligible_hours_label = Label(self.eligibility_frame, text="Hours", bg=self.notebook_bg)
+        self.eligible_hours_input = Entry(self.eligibility_frame, textvariable=self.eligible_hours,
+                                          justify='center', width=15)
+        self.eligible_size_label = Label(self.eligibility_frame, text="Employer Size", bg=self.notebook_bg)
+        self.eligible_size_input = Entry(self.eligibility_frame, textvariable=self.eligible_size,
+                                         justify='center', width=15)
+        CreateToolTip(self.eligibility_frame_label,
                       'The requirements to be eligible for the paid leave program. This includes '
                       'the amount of money earned in the last year, the number of weeks worked '
                       'in the last year, the number of hours worked in the ast year, and the '
                       'size of the employer.')
 
-        self.max_weeks_frame = ttk.Labelframe(self.program_frame, text="Max Weeks:", style='MSLabelframe.TLabelframe')
-        self.max_weeks, self.max_weeks_labels, self.max_weeks_inputs = self.create_leave_objects(self.max_weeks_frame,
-                                                                                                 default_input=12)
-        CreateToolTip(self.max_weeks_frame,
+        self.max_weeks_frame_label = ttk.Label(self.program_frame, text='Max Weeks:',
+                                               style='MSLabelframe.TLabelframe.Label')
+        self.max_weeks_frame = ttk.Labelframe(self.program_frame, labelwidget=self.max_weeks_frame_label,
+                                              style='MSLabelframe.TLabelframe')
+        self.max_weeks, self.max_weeks_labels, self.max_weeks_inputs = self.create_leave_objects(
+            self.max_weeks_frame, self.default_settings.max_weeks)
+        CreateToolTip(self.max_weeks_frame_label,
                       'The maximum number of weeks for each leave type that the program will pay for.')
 
         self.replacement_ratio_label = Label(self.program_frame, text="Replacement Ratio:", bg=self.notebook_bg)
-        self.replacement_ratio_input = ttk.Entry(self.program_frame, text="Replacement Ratio",
-                                                 textvariable=self.replacement_ratio)
+        self.replacement_ratio_input = Entry(self.program_frame, textvariable=self.replacement_ratio)
         CreateToolTip(self.replacement_ratio_label, 'The percentage of wage that the program will pay.')
 
         self.weekly_ben_cap_label = Label(self.program_frame, text="Weekly Benefit Cap:", bg=self.notebook_bg)
-        self.weekly_ben_cap_input = ttk.Entry(self.program_frame, text="Weekly Benefit Cap",
-                                              textvariable=self.weekly_ben_cap)
+        self.weekly_ben_cap_input = Entry(self.program_frame, textvariable=self.weekly_ben_cap)
         CreateToolTip(self.weekly_ben_cap_label, 'The maximum amount of benefits paid out per week.')
 
-        self.benefit_financing_frame = ttk.LabelFrame(self.program_frame, text='Benefit Financing',
+        # self.benefit_financing_frame_label = ttk.Label(self.program_frame, text='Benefit Financing:',
+        #                                                style='MSLabelframe.TLabelframe.Label')
+        self.benefit_financing_frame = ttk.LabelFrame(self.program_frame, text='Benefit Financing:',
                                                       style='MSLabelframe.TLabelframe')
         self.payroll_tax_label = Label(self.benefit_financing_frame, text='Payroll Tax (%):', bg=self.notebook_bg)
-        self.payroll_tax_input = ttk.Entry(self.benefit_financing_frame, textvariable=self.payroll_tax)
+        self.payroll_tax_input = Entry(self.benefit_financing_frame, textvariable=self.payroll_tax)
         CreateToolTip(self.payroll_tax_label, 'The payroll tax that will be implemented to fund benefits program.')
 
         self.benefits_tax_input = ttk.Checkbutton(self.benefit_financing_frame, text='Benefits Tax', onvalue=True,
@@ -217,8 +248,21 @@ class MicrosimGIU:
 
         self.average_state_tax_label = Label(self.benefit_financing_frame, text='State Average Tax Rate (%):',
                                              bg=self.notebook_bg)
-        self.average_state_tax_input = ttk.Entry(self.benefit_financing_frame, textvariable=self.average_state_tax)
+        self.average_state_tax_input = Entry(self.benefit_financing_frame, textvariable=self.average_state_tax)
         CreateToolTip(self.average_state_tax_label, 'The average tax rate of a selected state.')
+
+        self.max_taxable_earnings_per_person_label = Label(self.benefit_financing_frame,
+                                                           text='Maximum Taxable Earnings Per Person ($):',
+                                                           bg=self.notebook_bg)
+        self.max_taxable_earnings_per_person_input = Entry(self.benefit_financing_frame,
+                                                           textvariable=self.max_taxable_earnings_per_person)
+        CreateToolTip(self.max_taxable_earnings_per_person_label, 'The maximum amount that a person can be taxed.')
+
+        self.total_taxable_earnings_label = Label(self.benefit_financing_frame, text='Total Taxable Earnings ($):',
+                                                  bg=self.notebook_bg)
+        self.total_taxable_earnings_input = Entry(self.benefit_financing_frame,
+                                                  textvariable=self.total_taxable_earnings)
+        CreateToolTip(self.total_taxable_earnings_label, 'The total earnings that can be taxed.')
 
         self.government_employees_input = ttk.Checkbutton(self.program_frame, text="Government Employees", onvalue=True,
                                                           offvalue=False, variable=self.government_employees,
@@ -240,19 +284,25 @@ class MicrosimGIU:
 
         # ----------------------------------------- Population Settings ----------------------------------------------
 
-        self.take_up_rates_frame = ttk.Labelframe(self.population_frame, text="Take Up Rates:",
+        self.take_up_rates_frame_label = ttk.Label(self.population_frame, text='Take Up Rates:',
+                                                   style='MSLabelframe.TLabelframe.Label')
+        self.take_up_rates_frame = ttk.Labelframe(self.population_frame, labelwidget=self.take_up_rates_frame_label,
                                                   style='MSLabelframe.TLabelframe')
         self.take_up_rates, self.take_up_rates_labels, self.take_up_rates_inputs = \
-            self.create_leave_objects(self.take_up_rates_frame, default_input=100)
-        CreateToolTip(self.take_up_rates_frame, 'The proportion of eligible leave takers who decide to use the '
-                                                'program for each leave type.')
+            self.create_leave_objects(self.take_up_rates_frame, self.default_settings.take_up_rates, dtype='double')
+        CreateToolTip(self.take_up_rates_frame_label, 'The proportion of eligible leave takers who decide to use the '
+                                                      'program for each leave type.')
 
-        self.leave_probability_factors_frame = ttk.Labelframe(self.population_frame, text="Leave Probability Factors:",
+        self.leave_probability_factors_frame_label = ttk.Label(self.population_frame, text='Leave Probability Factors:',
+                                                               style='MSLabelframe.TLabelframe.Label')
+        self.leave_probability_factors_frame = ttk.Labelframe(self.population_frame,
+                                                              labelwidget=self.leave_probability_factors_frame_label,
                                                               style='MSLabelframe.TLabelframe')
         self.leave_probability_factors, self.leave_probability_factors_labels, self.leave_probability_factors_inputs = \
-            self.create_leave_objects(self.leave_probability_factors_frame, dtype='double', default_input=0.667)
-        CreateToolTip(self.leave_probability_factors_frame, 'Factors the probability of needing or taking '
-                                                            'a leave for each type of leave.')
+            self.create_leave_objects(self.leave_probability_factors_frame,
+                                      self.default_settings.leave_probability_factors, dtype='double')
+        CreateToolTip(self.leave_probability_factors_frame_label, 'Factors the probability of needing or taking '
+                                                                  'a leave for each type of leave.')
 
         self.benefit_effect_input = ttk.Checkbutton(self.population_frame, text="Benefit Effect", onvalue=True,
                                                     offvalue=False, variable=self.benefit_effect,
@@ -273,21 +323,20 @@ class MicrosimGIU:
                       'Whether or not all people who need leave take leave in the presnce of the program.')
 
         self.top_off_rate_label = Label(self.population_frame, text="Top Off Rate:", bg=self.notebook_bg)
-        self.top_off_rate_input = ttk.Entry(self.population_frame, text="Top Off Rate", textvariable=self.top_off_rate)
+        self.top_off_rate_input = Entry(self.population_frame, textvariable=self.top_off_rate)
         CreateToolTip(self.top_off_rate_label,
                       'The proportion of employers already paying full wages in the absence of the program '
                       'that will top off benefits in the presence of a program to reach full wages.')
 
         self.top_off_min_length_label = Label(self.population_frame, text="Top Off Minimum Length:",
                                               bg=self.notebook_bg)
-        self.top_off_min_length_input = ttk.Entry(self.population_frame, text="Top Off Minimum Length",
-                                                  textvariable=self.top_off_min_length)
+        self.top_off_min_length_input = Entry(self.population_frame, textvariable=self.top_off_min_length)
         CreateToolTip(self.top_off_min_length_label, 'The number of days employers will top off benefits.')
 
         # ----------------------------------------- Simulation Settings ----------------------------------------------
 
         self.clone_factor_label = Label(self.simulation_frame, text="Clone Factor:", bg=self.notebook_bg)
-        self.clone_factor_input = ttk.Entry(self.simulation_frame, text="Clone Factor", textvariable=self.clone_factor)
+        self.clone_factor_input = Entry(self.simulation_frame, textvariable=self.clone_factor)
         CreateToolTip(self.clone_factor_label,
                       'The number of times each sample person will be run through the simulation.')
 
@@ -297,8 +346,7 @@ class MicrosimGIU:
         CreateToolTip(self.se_analysis_input, 'Whether or not weight should be divided by clone factor value.')
 
         self.weight_factor_label = Label(self.simulation_frame, text="Weight Factor:", bg=self.notebook_bg)
-        self.weight_factor_input = ttk.Entry(self.simulation_frame, text="Weight Factor",
-                                             textvariable=self.weight_factor)
+        self.weight_factor_input = Entry(self.simulation_frame, textvariable=self.weight_factor)
         CreateToolTip(self.weight_factor_label, 'Multiplies the sample weights by value.')
 
         self.fmla_protection_constraint_input = ttk.Checkbutton(
@@ -370,6 +418,10 @@ class MicrosimGIU:
         self.benefits_tax_input.grid(column=0, row=1, columnspan=2, sticky=W, padx=(8, 0))
         self.average_state_tax_label.grid(column=0, row=2, sticky=W, padx=(8, 0))
         self.average_state_tax_input.grid(column=1, row=2, sticky=W)
+        self.max_taxable_earnings_per_person_label.grid(column=0, row=3, sticky=W, padx=(8, 0))
+        self.max_taxable_earnings_per_person_input.grid(column=1, row=3, sticky=W)
+        self.total_taxable_earnings_label.grid(column=0, row=4, sticky=W, padx=(8, 0))
+        self.total_taxable_earnings_input.grid(column=1, row=4, sticky=W)
         self.replacement_ratio_label.grid(column=0, row=3, sticky=W)
         self.replacement_ratio_input.grid(column=1, row=3, sticky=W)
         self.weekly_ben_cap_label.grid(column=0, row=4, sticky=W)
@@ -409,7 +461,7 @@ class MicrosimGIU:
             self.population_frame.rowconfigure(i, pad=self.row_padding)
         for i in range(6):
             self.simulation_frame.rowconfigure(i, pad=self.row_padding)
-        for i in range(3):
+        for i in range(5):
             self.benefit_financing_frame.rowconfigure(i, pad=self.row_padding)
 
         # Set column weights. This will cause certain columns to take up more space.
@@ -427,40 +479,48 @@ class MicrosimGIU:
         self.set_notebook_width(self.settings_frame.winfo_width() - 30)
         self.set_scroll_region()
 
+        # self.test_result_output()
+
     # Puts the window in the center of the screen
     def position_window(self):
-        self.root.update()  # Update changes to root first
+        self.update()  # Update changes to root first
 
         # Get the width and height of both the window and the user's screen
-        ww = self.root.winfo_width()
-        wh = self.root.winfo_height()
-        sw = self.root.winfo_screenwidth()
-        sh = self.root.winfo_screenheight()
+        ww = self.winfo_width()
+        wh = self.winfo_height()
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
 
         # Formula for calculating the center
         x = (sw / 2) - (ww / 2)
         y = (sh / 2) - (wh / 2) - 50
 
         # Set window minimum size
-        self.root.minsize(ww, wh)
+        self.minsize(ww, wh)
 
-        self.root.geometry('%dx%d+%d+%d' % (ww, wh, x, y))
+        self.geometry('%dx%d+%d+%d' % (ww, wh, x, y))
 
-    # Display window
-    def show_window(self):
-        self.root.mainloop()
+    def on_close(self):
+        self.destroy()
 
     def run_simulation(self):
-        # TODO: make max_wk in SimulationEngine() as a dict, compatible to GUI so offer flexible max weeks for 6 leave types
+        self.clear_errors()
+        errors = self.validate_settings()
+
+        if len(errors) > 0:
+            self.display_errors(errors)
+            return
+
         settings = self.create_settings()
 
         # run simulation
         # initiate a SimulationEngine instance
         st = settings.state.lower()
         fullFp_acs, fullFp_fmla, fullFp_out = settings.acs_file, settings.fmla_file, settings.output_directory
-        fp_fmla_cf = '.'+fullFp_fmla[fullFp_fmla.find('/data/fmla_2012/'):]
+        fp_fmla = '.'+fullFp_fmla[fullFp_fmla.find('/data/fmla_2012/'):]
         fp_acs = '.'+fullFp_acs[fullFp_acs.find('/data/acs/'):]
         fp_out = fullFp_out
+        clf_name = settings.simulation_method
         rr1 = settings.replacement_ratio
         hrs = settings.eligible_hours
         max_wk = settings.max_weeks # this returns a dict
@@ -472,44 +532,65 @@ class MicrosimGIU:
         max_wk['illspouse'] = max_wk.pop('Ill Spouse')
         max_wk['illparent'] = max_wk.pop('Ill Parent')
         max_wk_replace = settings.weekly_ben_cap
-        se = SimulationEngine(st, fp_acs, fp_fmla_cf, fp_out, rr1, hrs, max_wk, max_wk_replace)
+
+        empgov = settings.government_employees
+        empself = settings.self_employed
+
+        se = SimulationEngine(st, fp_acs, fp_fmla, fp_out, clf_name, rr1, hrs, max_wk, max_wk_replace, empgov,
+                              empself)
         # compute program costs
         acs = se.get_acs_simulated()
         d_type = se.d_type  # get a dict from varname style leave types to user-readable leave types
         takeups = settings.take_up_rates  # this returns a dict of user input of takeup in GUI
-        takeups = {k: v / 100 for k, v in takeups.items()}
         for k, v in d_type.items():
             takeups[k] = takeups.pop(v)  # convert readable types to varname types
         costs = se.get_cost(acs, takeups)
 
-        d_bars = {'Own Health': round(costs['Own Health'], 1),
-                  'Maternity': round(costs['Maternity']),
-                  'New Child': round(costs['New Child']),
-                  'Ill Child': round(costs['Ill Child']),
-                  'Ill Spouse': round(costs['Ill Spouse']),
-                  'Ill Parent': round(costs['Ill Parent'])}
+        d_bars = {'Own Health': costs['Own Health'],
+                  'Maternity': costs['Maternity'],
+                  'New Child': costs['New Child'],
+                  'Ill Child': costs['Ill Child'],
+                  'Ill Spouse': costs['Ill Spouse'],
+                  'Ill Parent': costs['Ill Parent']}
 
         ks = ['Own Health','Maternity','New Child','Ill Child','Ill Spouse','Ill Parent']
         od_bars = collections.OrderedDict((k, d_bars[k]) for k in ks)
 
-        # This code currently generates a mock up of a results window
-        results_window = Toplevel(self.root)
-        results_window.resizable(False, False)  # Prevent window from being resized
+        results_window = Toplevel(self)
         results_content = Frame(results_window, bg=self.dark_bg)
         results_summary_frame = Frame(results_content, bg=self.dark_bg)
-        cost_result_label = Label(results_summary_frame, text="Cost: ${} million".format(sum(od_bars.values())), font='-size 14', bg=self.dark_bg, fg=self.light_font, justify=LEFT)
+        result_graph = Frame(results_content)
+        cost_result_label = Label(results_summary_frame, text="Cost: ${} Million".format(round(sum(od_bars.values()), 1)), font='-size 14', bg=self.dark_bg, fg=self.light_font, justify=LEFT)
         state_result_label = Label(results_summary_frame, text="State: {}".format(self.state.get()), font='-size 12',
                                    bg=self.dark_bg, fg=self.light_font)
-
-        graph_canvas = Canvas(results_content, width=800, height=550, bg='white')
 
         results_content.pack(fill=BOTH)
         results_summary_frame.pack(fill=X, padx=15)
         cost_result_label.pack(fill=X, pady=(10, 5))
         state_result_label.pack(fill=X)
-        graph_canvas.pack(fill=X, padx=15, pady=15)
+        result_graph.pack(fill=X, padx=15, pady=15)
 
-        self.display_bar_graph(graph_canvas, od_bars)
+        self.display_bar_graph(od_bars, result_graph)
+
+    def test_result_output(self):
+        # This code currently generates a mock up of a results window
+        results_window = Toplevel(self)
+        results_content = Frame(results_window, bg=self.dark_bg)
+        results_summary_frame = Frame(results_content, bg=self.dark_bg)
+        result_graph = Frame(results_content)
+        cost_result_label = Label(results_summary_frame, text="Cost: {}".format('XXX'), font='-size 14',
+                                  bg=self.dark_bg, fg=self.light_font, justify=LEFT)
+        state_result_label = Label(results_summary_frame, text="State: {}".format(self.state.get()), font='-size 12',
+                                   bg=self.dark_bg, fg=self.light_font)
+
+        results_content.pack(fill=BOTH)
+        results_summary_frame.pack(fill=X, padx=15)
+        cost_result_label.pack(fill=X, pady=(10, 5))
+        state_result_label.pack(fill=X)
+        result_graph.pack(fill=X, padx=15, pady=15)
+
+        self.display_bar_graph({'Own Health': 10, 'Maternity': 200, 'New Child': 10, 'Ill Child': 8,
+                                'Ill Spouse': 5, 'Ill Parent': 0}, results_content)
 
     # Create an object with all of the setting values
     def create_settings(self):
@@ -526,29 +607,112 @@ class MicrosimGIU:
                         self.eligible_hours.get(), self.eligible_size.get(),
                         {key: value.get() for key, value in self.max_weeks.items()},
                         {key: value.get() for key, value in self.take_up_rates.items()},
-                        {key: value.get() for key, value in self.leave_probability_factors.items()})
+                        {key: value.get() for key, value in self.leave_probability_factors.items()},
+                        self.payroll_tax.get(), self.benefits_tax.get(), self.average_state_tax.get(),
+                        self.max_taxable_earnings_per_person.get(), self.total_taxable_earnings_input.get())
 
     def browse_file(self, file_input):
         # Open a file dialogue where user can choose a file. Possible options are limited to CSV and Excel files.
-        file_name = filedialog.askopenfilename(initialdir=os.getcwd(), filetypes=self.spreadsheet_ftypes)
+        file_name = filedialog.askopenfilename(initialdir=self.cwd, filetypes=self.spreadsheet_ftypes)
         file_input.delete(0, END)  # Clear current value in entry widget
         file_input.insert(0, file_name)  # Add user-selected value to entry widget
 
     def browse_directory(self, directory_input):
         # Open a file dialogue where user can choose a directory.
-        directory_name = filedialog.askdirectory(initialdir=os.getcwd())
+        directory_name = filedialog.askdirectory(initialdir=self.cwd)
         directory_input.delete(0, END)  # Clear current value in entry widget
         directory_input.insert(0, directory_name)  # Add user-selected value to entry widget
+
+    def save_file(self, figure):
+        filename = filedialog.asksaveasfilename(defaultextension='.png', initialdir=self.cwd,
+                                                filetypes=[('PNG', '.png'), ('PDF', '*.pdf'), ('PGF', '*.pgf'),
+                                                           ('EPS', '*.eps'), ('PS', '*.ps'), ('Raw', '*.raw'),
+                                                           ('RGBA', '*.rgba'), ('SVG', '*.svg'), ('SVGZ', '*.svgz')])
+        if filename is None:
+            return
+
+        figure.savefig(filename)
+
+    def check_file_entries(self, *_):
+        if self.fmla_file.get() and self.acs_file.get() and self.output_directory.get():
+            self.run_button.config(state=NORMAL, bg=self.theme_color)
+        else:
+            self.run_button.config(state=DISABLED, bg='#99d6ff')
+
+    def validate_settings(self):
+        errors = []
+
+        integer_entries = [self.eligible_earnings_input, self.eligible_weeks_input, self.eligible_hours_input,
+                           self.eligible_size_input, self.weekly_ben_cap_input, self.top_off_min_length_input,
+                           self.clone_factor_input, self.weight_factor_input,
+                           self.max_taxable_earnings_per_person_input, self.total_taxable_earnings_input]
+        integer_entries += [entry for entry in self.max_weeks_inputs]
+
+        float_entries = [self.payroll_tax_input, self.average_state_tax_input]
+
+        rate_entries = [self.replacement_ratio_input, self.top_off_rate_input]
+        rate_entries += [entry for entry in self.take_up_rates_inputs]
+        rate_entries += [entry for entry in self.leave_probability_factors_inputs]
+
+        for entry in integer_entries:
+            if not self.validate_integer(entry.get()):
+                errors.append((entry, 'This field should contain an integer greater than or equal to 0'))
+
+        for entry in float_entries:
+            if not self.validate_float(entry.get()):
+                errors.append((entry, 'This field should contain an integer greater than or equal to 0'))
+
+        for entry in rate_entries:
+            if not self.validate_rate(entry.get()):
+                errors.append((entry, 'This field should contain a number greater than or equal to '
+                                      '0 and less than or equal to 1'))
+
+        return errors
+
+    @staticmethod
+    def validate_integer(value):
+        try:
+            return int(value) >= 0
+        except ValueError:
+            return False
+
+    @staticmethod
+    def validate_float(value):
+        try:
+            return float(value) >= 0
+        except ValueError:
+            return False
+
+    @staticmethod
+    def validate_rate(value):
+        try:
+            return 0 <= float(value) <= 1
+        except ValueError:
+            return False
+
+    def display_errors(self, errors):
+        for widget, error in errors:
+            widget.config(bg='red', fg='white')
+            self.error_tooltips.append((widget, CreateToolTip(widget, error)))
+
+        messagebox.showinfo('Error', message='There was an error with one or more entries.')
+
+    def clear_errors(self):
+        for widget, tooltip in self.error_tooltips:
+            widget.config(bg='white', fg='black')
+            tooltip.hidetip()
+
+        self.error_tooltips = []
 
     # Allows the scroll wheel to move a scrollbar
     def scroll(self, event):
         # In Windows, the delta will be either 120 or -120. In Mac, it will be 1 or -1.
         # The delta value will determine whether the user is scrolling up or down.
         move_unit = 0
-        if event.num == 5 or event.delta == -120:
-            move_unit = 1
-        elif event.num == 4 or event.delta == 120:
+        if event.num == 5 or event.delta > 0:
             move_unit = -1
+        elif event.num == 4 or event.delta < 0:
+            move_unit = 1
 
         # Only scroll the tab that is currently visible.
         if self.current_tab == 0:
@@ -587,55 +751,46 @@ class MicrosimGIU:
 
     # Some inputs require an entry value for each leave type. It is better to store each input in a list than
     # create separate variables for all of them.
-    def create_leave_objects(self, parent, dtype='int', default_input=0.0):
+    def create_leave_objects(self, parent, default_input, dtype='int'):
         leave_vars = {}  # A dictionary of the variables that will be updated by the user
         leave_type_labels = []  # A list of label widgets for inputs
         leave_type_inputs = []  # A list of entry inputs
         for i, leave_type in enumerate(self.leave_types):
             # The only data types right now for variables are integer and double.
             if dtype == 'double':
-                leave_vars[leave_type] = DoubleVar(value=default_input)
+                leave_vars[leave_type] = DoubleVar(value=default_input[leave_type])
             else:
-                leave_vars[leave_type] = IntVar(value=default_input)
+                leave_vars[leave_type] = IntVar(value=default_input[leave_type])
 
             # Create the label and entry widgets
             leave_type_labels.append(Label(parent, text=leave_type, bg=self.notebook_bg))
-            leave_type_inputs.append(ttk.Entry(parent, textvariable=leave_vars[leave_type], justify='center', width=10))
+            leave_type_inputs.append(Entry(parent, textvariable=leave_vars[leave_type], justify='center', width=10))
             parent.columnconfigure(i, weight=1)
 
         return leave_vars, leave_type_labels, leave_type_inputs
 
     # Display label and entry widgets for inputs that exist for each leave type.
-    @classmethod
-    def display_leave_objects(cls, labels, inputs):
+    @staticmethod
+    def display_leave_objects(labels, inputs):
         for idx in range(len(labels)):
             labels[idx].grid(column=idx, row=0, sticky=(E, W))
             inputs[idx].grid(column=idx, row=1, sticky=(E, W))
 
     # Display simulation results as bar graph.
-    @classmethod
-    def display_bar_graph(cls, canvas, data):
-        graph_width = int(canvas['width'])
-        graph_height = int(canvas['height'])
-        x_gap = 25
-        y_gap = 20
-        label_space = 30
+    def display_bar_graph(self, data, frame):
+        figure = Figure(figsize=(8, 6), dpi=100)
+        index = range(len(data.keys()))
+        graph = figure.add_subplot(111, ylabel='Cost')
+        graph.bar(index, data.values(), tick_label=list(data.keys()))
+        graph.set_xlabel('Leave Type', fontsize=14, labelpad=10)
+        graph.set_ylabel('Cost', fontsize=14, labelpad=10)
+        canvas = FigureCanvasTkAgg(figure, frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(side=TOP, fill=BOTH, expand=True)
 
-        largest = max(data.values())
-        pixel_ratio_y = float(graph_height - y_gap - label_space) / largest
-        x_width = (graph_width - x_gap) / len(data) - x_gap
-
-        idx = 0
-        for key, value in data.items():
-            x0 = idx * (x_width + x_gap) + x_gap
-            x1 = x0 + x_width
-
-            y0 = float(graph_height - label_space) - value * pixel_ratio_y
-            y1 = graph_height - label_space
-            canvas.create_rectangle(x0, y0, x1, y1, fill="red")
-            canvas.create_text(x0 + x_width / 2, graph_height - label_space / 2, text=key, font='-size 12')
-
-            idx += 1
+        save_button = MSButton(frame, text='Save Figure', command=lambda: self.save_file(figure))
+        save_button.config(width=0)
+        save_button.pack(side=RIGHT, padx=10, pady=10)
 
 
 # From StackOverflow: https://stackoverflow.com/questions/3221956/how-do-i-display-tooltips-in-tkinter
@@ -693,8 +848,15 @@ class CreateToolTip(object):
 # a certain way.
 class MSButton(Button):
     def __init__(self, parent=None, **kwargs):
-        super().__init__(parent, foreground='#FFFFFF', background='#0074BF', font='-size 11 -weight bold', width=8,
-                         relief='flat', activebackground='#FFFFFF', **kwargs)
+        super().__init__(parent, foreground='#FFFFFF', background='#0074BF', font='-size 12', width=8,
+                         relief='flat', activebackground='#FFFFFF', pady=0, bd=0, **kwargs)
+
+
+class MSRunButton(Button):
+    def __init__(self, parent=None, **kwargs):
+        super().__init__(parent, foreground='#FFFFFF', background='#ccebff', font='-size 11 -weight bold', width=8,
+                         relief='flat', activebackground='#FFFFFF', disabledforeground='#FFFFFF', state=DISABLED,
+                         **kwargs)
 
 
 class MSEntry(Entry):
@@ -704,11 +866,14 @@ class MSEntry(Entry):
 
 
 class Settings:
-    def __init__(self, fmla_file, acs_file, output_directory, detail, state, simulation_method, benefit_effect,
-                 calibrate, clone_factor, se_analysis, extend, fmla_protection_constraint, replacement_ratio,
-                 government_employees, needers_fully_participate, random_seed, self_employed, state_of_work,
-                 top_off_rate, top_off_min_length, weekly_ben_cap, weight_factor, eligible_earnings, eligible_weeks,
-                 eligible_hours, eligible_size, max_weeks, take_up_rates, leave_probability_factors):
+    def __init__(self, fmla_file=None, acs_file=None, output_directory=None, detail=None, state=None,
+                 simulation_method=None, benefit_effect=False, calibrate=True, clone_factor=1, se_analysis=False,
+                 extend=False, fmla_protection_constraint=False, replacement_ratio=0.5, government_employees=True,
+                 needers_fully_participate=False, random_seed=False, self_employed=False, state_of_work=False,
+                 top_off_rate=0, top_off_min_length=0, weekly_ben_cap=1250, weight_factor=1, eligible_earnings=3000,
+                 eligible_weeks=52, eligible_hours=1250, eligible_size=50, max_weeks=None, take_up_rates=None,
+                 leave_probability_factors=None, payroll_tax=0, benefits_tax=False, average_state_tax=0,
+                 max_taxable_earnings_per_person=0, total_taxable_earnings=0):
         self.fmla_file = fmla_file
         self.acs_file = acs_file
         self.output_directory = output_directory
@@ -735,13 +900,30 @@ class Settings:
         self.eligible_weeks = eligible_weeks
         self.eligible_hours = eligible_hours
         self.eligible_size = eligible_size
-        self.max_weeks = max_weeks
-        self.take_up_rates = take_up_rates
-        self.leave_probability_factors = leave_probability_factors
+        self.payroll_tax = payroll_tax
+        self.benefits_tax = benefits_tax
+        self.average_state_tax = average_state_tax
+        self.max_taxable_earnings_per_person = max_taxable_earnings_per_person
+        self.total_taxable_earnings = total_taxable_earnings
+        if max_weeks is None:
+            self.max_weeks = {'Own Health': 12, 'Maternity': 12, 'New Child': 12, 'Ill Child': 12, 'Ill Spouse': 12,
+                              'Ill Parent': 12}
+        else:
+            self.max_weeks = max_weeks
+        if take_up_rates is None:
+            self.take_up_rates = {'Own Health': 0.5, 'Maternity': 0.5, 'New Child': 0.5, 'Ill Child': 0.5, 'Ill Spouse': 0.5,
+                                  'Ill Parent': 0.5}
+        else:
+            self.take_up_rates = take_up_rates
+        if leave_probability_factors is None:
+            self.leave_probability_factors = {'Own Health': 0.667, 'Maternity': 0.667, 'New Child': 0.667,
+                                              'Ill Child': 0.667, 'Ill Spouse': 0.667, 'Ill Parent': 0.667}
+        else:
+            self.leave_probability_factors = leave_probability_factors
 
 
 gui = MicrosimGIU()
-gui.show_window()
+gui.mainloop()
 
 # style.configure('Button.border', relief='flat')
 # style.configure('Button.label', foreground='#FFFFFF', background='#0074BF', font='-size 11 -weight bold', width=8)

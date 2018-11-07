@@ -26,13 +26,13 @@ t0 = time()
 # -------------------------- #
 
 # Load data
-st = 'ma'
+st = 'ca'
 d_hh = pd.read_csv("C:/workfiles/Microsimulation/git/large_data_files/ss15h%s.csv" % st)
 
 # Create Variables
 d_hh["nochildren"]  = pd.get_dummies(d_hh["FPARC"])[4]
-d_hh['faminc'] = d_hh['FINCP']*d_hh['ADJINC'] / 1042852 # adjust to 2012 dollars to conform with FMLA 2012 data
-d_hh.loc[(d_hh['faminc']<=0), 'faminc'] = 0.01 # force non-positive income to be epsilon to get meaningful log-income
+d_hh['faminc'] = d_hh['FINCP']*d_hh['ADJINC'] / 1042852 / 1000 # adjust to 2012 thousand dollars to conform with FMLA 2012 data
+d_hh.loc[(d_hh['faminc']<=0), 'faminc'] = 0.01/1000 # force non-positive income to be epsilon to get meaningful log-income
 d_hh["lnfaminc"]    = np.log(d_hh["faminc"])
 
 # Number of dependents
