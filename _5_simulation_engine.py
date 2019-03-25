@@ -15,6 +15,7 @@ Chris Zhang 9/13/2018
 
 import pandas as pd
 import numpy as np
+import random
 import json
 import collections
 import os.path
@@ -95,19 +96,49 @@ class SimulationEngine():
         elif self.clf_name == 'Support Vector Machine':
             self.alpha = 2.485
 
-    def get_simulator_params(self):
+    def get_columns(self):
         Xs = ['age', 'agesq', 'male', 'noHSdegree',
                   'BAplus', 'empgov_fed', 'empgov_st', 'empgov_loc',
                   'lnfaminc', 'black', 'asian', 'hisp', 'other',
                   'ndep_kid', 'ndep_old', 'nevermarried', 'partner',
                   'widowed', 'divorced', 'separated']
-        ys = ['taker', 'needer']
+        ys = ['take_own', 'take_matdis', 'take_bond', 'take_illchild', 'take_illspouse', 'take_illparent']
+        ys += ['need_own', 'need_matdis', 'need_bond', 'need_illchild', 'need_illspouse', 'need_illparent']
         ys += ['resp_len']
         w = ['weight']
-        k = 2
 
+        return (Xs, ys, w)
 
-        return (Xs, ys, w, k)
+    def fill_miss(self, df):
+        '''
+        fill missing values in dataframe df. If column is binary, fillna using 0/1 with mean preserved. Otherwise, fillna using mean.
+        :param df:
+        :return: df with missing values filled in
+        '''
+
+        # Fill in missing values - training predictors
+        # TODO: merge in training outvars (0/1), testing x, testing y. Make FMLA/ACS notation general. Handle fillna outside fn.
+
+        # find boolean cols with missing, fill missing as 0/1 draw with mean preserved
+        df_miss = df[[col for col in df.columns if len(df[col].isna().value_counts()) == 2]]
+        bool_cols = []
+        if df_miss.shape[1]>0:
+            bool_cols = [col for col in df_miss.columns if
+                         df_miss[col].dropna().value_counts().index.isin([0, 1]).all()]
+        del df_miss
+
+        # If any boolean cols, fillna with mean preserved
+        if len(bool_cols)>0:
+            df['z'] = np.random.uniform(0, 1, len(df))
+            for col in bool_cols:
+                mu = df[col].mean()
+                df.loc[df[col].isna(), col] = df['z'] <= mu
+                df[col] = df[col].astype('int') # make sure entire column remains integer for model fitting
+            del df['z']
+        # for other non-boolean cols, fillna with mean
+        df = df.fillna(df.mean())
+
+        return df
 
     def get_aux_data_fp(self):
         '''
@@ -167,6 +198,30 @@ class SimulationEngine():
                 phat = np.exp(d) / np.array([[x] * len(d[0]) for x in np.exp(d).sum(axis=1)])
         return phat
 
+    def get_yhats(self, x0, y0, w0, x1):
+        '''
+        get predicted yhat as 0/1
+        note: classifier choice have been made in __init__ as self.clf_name and fed to get_pred_probs()
+
+        :param x0: cleaned up training data predictors, with missing values filled
+        :param y0: cleaned up training data outvars, with missing values filled
+        :param w0: array of training data weights
+        :param x1: cleaned up target sample data, with missing values filled
+        :return: the predicted columns yhats (same # columns as y0)
+        '''
+        # Initialize yhat columns
+        yhats = pd.DataFrame([])
+        # Add columns to yhats using wheel of fortune based on decimal phat from prediction
+        for c in y0.columns:
+            self.fit_model(x0, y0[c], w0)
+            phat = self.get_pred_probs(x1)
+            phat = pd.DataFrame(phat).set_index(x1.index)
+            phat.columns = ['p_%s' % int(x) for x in self.clf.classes_]
+            # apply wheel of fortune
+            yhats[c] = phat[phat.columns].apply(lambda x: simulate_wof(x), axis=1)
+
+        return yhats
+
     def get_acs_simulated(self):
         t0 = time()
 
@@ -204,12 +259,54 @@ class SimulationEngine():
         acs.index.name = 'acswid'
 
         # -------------
-        # Read in Parameters
+        # Get needed FMLA and ACS columns, and fill in missing values
         # -------------
+        Xs, ys, w= self.get_columns()
+        fmla_xtr = fmla[Xs]
+        fmla_ytr = fmla[ys]
+        wght = fmla[w]
+        wght = [x[0] for x in np.array(wght)]
+        acs_x = acs[Xs]
 
-        # Algorithm parameter
-        Xs, ys, w, k = self.get_simulator_params()
+        fmla_xtr = self.fill_miss(fmla_xtr)
+        fmla_ytr = self.fill_miss(fmla_ytr)
+        acs_x = self.fill_miss(acs_x)
 
+        # -------------
+        # Train FMLA data, predict 6 take_type dummies, 6 need_type dummies, and financially-constrained status (resp_len)
+        # -------------
+        acs_yhats = self.get_yhats(fmla_xtr, fmla_ytr, wght, acs_x)
+        acs = acs.join(acs_yhats)
+
+        # Logical checks:
+            # make sure take/need matdis = 0 for all males
+        acs.loc[(acs['male'] == 1), 'take_matdis'] = 0
+        acs.loc[(acs['male'] == 1), 'need_matdis'] = 0
+            # make sure take/need bond = 0 for all without kids
+        acs.loc[(acs['ndep_kid'] == 0), 'take_bond'] = 0
+        acs.loc[(acs['ndep_kid'] == 0), 'need_bond'] = 0
+            # make sure take/need illspouse = 0 for all without spouse/partner
+        acs.loc[( (acs['separated'] == 1) |
+                  (acs['divorced'] == 1) |
+                  (acs['widowed'] == 1) |
+                  (acs['nevermarried'] == 1) ), 'take_illspouse'] = 0
+        acs.loc[( (acs['separated'] == 1) |
+                  (acs['divorced'] == 1) |
+                  (acs['widowed'] == 1) |
+                  (acs['nevermarried'] == 1) ), 'need_illspouse'] = 0
+
+            # make sure resp_len = 0 for workers who do not take or need any leaves
+        for c in ['take', 'need']:
+            acs['%sr' % c] = 1
+            acs.loc[( (acs['%s_own' % c] == 0) &
+                      (acs['%s_matdis' % c] == 0) &
+                      (acs['%s_bond' % c] == 0) &
+                      (acs['%s_illchild' % c] == 0) &
+                      (acs['%s_illspouse' % c] == 0) &
+                      (acs['%s_illparent' % c] == 0)), '%sr' % c] = 0
+        acs = acs.rename(columns={'needr': 'needer'})
+        acs.loc[(acs['taker'] == 0) & (acs['needer']==0), 'resp_len'] = 0
+        '''
         # -------------
         # Train FMLA data, use ACS to predict Taker/Needer statuses, and financially-constrained status (resp_len)
         # -------------
@@ -244,6 +341,9 @@ class SimulationEngine():
 
         # make sure resp_len = 1 only for takers or needers
         acs.loc[(acs['taker']==0) & (acs['needer']==0), 'resp_len'] = 0
+        '''
+
+
 
         # -------------
         # Simulate most recent leave type for takers/needers/dual

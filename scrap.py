@@ -240,3 +240,243 @@ If tol is not None, max_iter defaults to max_iter=1000. From 0.21, default max_i
 '''
 
 cps = pd.read_csv('./data/cps/CPS2014extract.csv')
+
+
+
+
+####### TEST CODE: modularized get_yhat() etc.
+from time import time
+from _5a_aux_functions import simulate_wof
+clf_name = 'Logistic Regression'
+clf = sklearn.linear_model.LogisticRegression(solver='liblinear', multi_class='auto')
+
+def fill_miss(df):
+    '''
+    fill missing values in dataframe df. If column is binary, fillna using 0/1 with mean preserved. Otherwise, fillna using mean.
+    :param df:
+    :return: df with missing values filled in
+    '''
+
+    # Fill in missing values - training predictors
+
+    # find boolean cols with missing, fill missing as 0/1 draw with mean preserved
+    df_miss = df[[col for col in df.columns if len(df[col].isna().value_counts()) == 2]]
+    bool_cols = []
+    if df_miss.shape[1] > 0:
+        bool_cols = [col for col in df_miss.columns if
+                     df_miss[col].dropna().value_counts().index.isin([0, 1]).all()]
+    del df_miss
+
+    # If any boolean cols, fillna with mean preserved
+    if len(bool_cols) > 0:
+        df['z'] = np.random.uniform(0, 1, len(df))
+        for col in bool_cols:
+            mu = df[col].mean()
+            df.loc[df[col].isna(), col] = df['z'] <= mu
+            df[col] = df[col].astype('int')
+        del df['z']
+    # for other non-boolean cols, fillna with mean
+    df = df.fillna(df.mean())
+
+    return df
+
+
+def fit_model(xtr, ytr, ws):
+    '''
+    fit model using a simulation method, with some configurations tailored to the method
+    :param xtr: training data, x
+    :param ytr: training data, y, one column
+    :param ws: weights
+
+    '''
+    '''
+        if clf_name in ['Logistic Regression',
+                         'Random Forest',
+                         'Support Vector Machine',
+                         'Ridge Classifier',
+                         'Stochastic Gradient Descent',
+                         'Naive Bayes']:
+        clf.fit(xtr, ytr, sample_weight=ws)
+    if clf_name in ['K Nearest Neighbor']:
+        ws = np.array([ws])  # make sure weights[:, i] can be called in package code classification.py
+        f = lambda x: ws
+        clf = sklearn.neighbors.KNeighborsClassifier(weights=f)
+        clf.fit(xtr, ytr)
+    '''
+
+    clf.fit(xtr, ytr, sample_weight=ws)
+    return None
+
+def get_pred_probs(xts):
+    '''
+    get predicted probabilities of all classes for the post-fit self.clf
+    :param xts: testing/prediction dataset
+    :return: array of list of probs, one column
+    '''
+
+    if clf_name in ['Logistic Regression',
+                         'Random Forest',
+                         'Stochastic Gradient Descent',
+                         'Support Vector Machine',
+                         'Naive Bayes',
+                         'K Nearest Neighbor']:
+        phat = clf.predict_proba(xts)
+    if clf_name in ['Ridge Classifier']:
+        d = clf.decision_function(xts)  # distance to hyperplane
+        # case of binary classification, d is np.array([...])
+        if d.ndim == 1:
+            phat = np.exp(d) / (1 + np.exp(d))  # list of pr(yhat = 1)
+            phat = np.array([[(1 - x), x] for x in phat])
+        # case of multiclass problem (n class >=3), di is np.array([[...]])
+        elif d.ndim == 2:
+            phat = np.exp(d) / np.array([[x] * len(d[0]) for x in np.exp(d).sum(axis=1)])
+    return phat
+
+
+def get_yhats(x0, y0, w0, x1):
+    '''
+    get predicted yhat's as 0/1
+    note: classifier choice have been made in __init__ as self.clf_name and fed to get_pred_probs()
+
+    :param x0: cleaned up training data predictors, with missing values filled
+    :param y0: cleaned up training data outvars, with missing values filled
+    :param w0: array of training data weights
+    :param x1: cleaned up target sample data, with missing values filled
+    :return: the predicted yhat columns (same # columns as y0)
+    '''
+
+    # Initialize yhat columns
+    yhats = pd.DataFrame([])
+    # Add columns to yhats using wheel of fortune based on decimal phat from prediction
+    for c in y0.columns:
+        fit_model(x0, y0[c], w0)
+        phat = get_pred_probs(x1)
+        phat = pd.DataFrame(phat).set_index(x1.index)
+        phat.columns = ['p_%s' % int(x) for x in clf.classes_]
+        # apply wheel of fortune
+        yhats[c] = phat[phat.columns].apply(lambda x: simulate_wof(x), axis=1)
+        # x1 = x1.join(phat[c])
+    # Remove columns in phat that are probabilities, keep only predicted 0/1
+    # print(phat.head())
+    # phat = phat.drop(columns=['p_%s' % int(x) for x in clf.classes_])
+    return yhats
+
+
+fmla = pd.read_csv('./data/fmla_2012/fmla_clean_2012.csv')
+acs = pd.read_csv('./data/acs/ACS_cleaned_forsimulation_ma.csv')
+
+fmla.index.name = 'empid'
+
+# -------------
+# Restrict ACS sample
+# -------------
+
+# Restrict based on employment status and age
+acs = acs[(acs.age >= 18)]
+acs = acs.drop(index=acs[acs.ESR == 4].index)  # armed forces at work
+acs = acs.drop(index=acs[acs.ESR == 5].index)  # armed forces with job but not at work
+acs = acs.drop(index=acs[acs.ESR == 6].index)  # NILF
+acs = acs.drop(index=acs[acs.COW == 8].index)  # working without pay in family biz
+acs = acs.drop(index=acs[acs.COW == 9].index)  # unemployed for 5+ years, or never worked
+acs.index.name = 'acswid'
+
+Xs = ['age', 'agesq', 'male', 'noHSdegree',
+      'BAplus', 'empgov_fed', 'empgov_st', 'empgov_loc',
+      'lnfaminc', 'black', 'asian', 'hisp', 'other',
+      'ndep_kid', 'ndep_old', 'nevermarried', 'partner',
+      'widowed', 'divorced', 'separated']
+ys = ['take_own', 'take_matdis', 'take_bond', 'take_illchild', 'take_illspouse', 'take_illparent']
+ys += ['need_own', 'need_matdis', 'need_bond', 'need_illchild', 'need_illspouse', 'need_illparent']
+ys += ['resp_len']
+w = ['weight']
+
+fmla_xtr = fmla[Xs]
+fmla_ytr = fmla[ys]
+wght = fmla[w]
+wght = [x[0] for x in np.array(wght)]
+acs_x = acs[Xs]
+
+fmla_xtr = fill_miss(fmla_xtr)
+fmla_ytr = fill_miss(fmla_ytr)
+acs_x = fill_miss(acs_x)
+
+
+# acs_xs = acs_x[:20]
+t0 = time()
+acs_yhats = get_yhats(fmla_xtr, fmla_ytr, wght, acs_x)
+print('Time elapsed = %s' % (time() - t0))
+
+
+
+
+ytr2 = ytr['take_own'].apply(lambda x: int(x))
+
+ytr2=ytr.astype('int')
+
+##### check multiple take_type
+types = ['own', 'matdis', 'bond', 'illchild', 'illspouse', 'illparent']
+fmla['take_sum'] = fmla[['take_%s' % x for x in types]].apply(lambda x: sum(x), axis = 1)
+fmla['diff_reason'] = np.nan
+fmla.loc[(fmla['A20']==2) & (fmla['A5_1_CAT'].notna()) & (fmla['A5_2_CAT'].notna()), 'diff_reason'] = \
+fmla.loc[(fmla['A20']==2) & (fmla['A5_1_CAT'].notna()) & (fmla['A5_2_CAT'].notna()), ['A5_1_CAT','A5_2_CAT']] \
+    .apply(lambda x: int(x[0]!=x[1]), axis=1)
+
+fmla[fmla['diff_reason']==1][['num_leaves_taken', 'A4a_CAT','diff_reason','A5_1_CAT','A5_2_CAT', 'take_illspouse', 'take_illchild']]
+
+fmla[fmla.take_sum>1][['take_sum'] + ['take_%s' % x for x in types]
+                      + ['reason_take', 'A20', 'A5_1_CAT', 'A5_2_CAT']]
+fmla[fmla.A20==2][['A5_1_CAT','A5_2_CAT']]
+
+
+fmla['need_sum'] = fmla[['need_%s' % x for x in types]].apply(lambda x: sum(x), axis = 1)
+fmla['diff_need'] = np.nan
+fmla.loc[(fmla['B6_1_CAT'].notna()) & (fmla['B6_2_CAT'].notna()), 'diff_need'] = \
+fmla.loc[(fmla['B6_1_CAT'].notna()) & (fmla['B6_2_CAT'].notna()), ['B6_1_CAT','B6_2_CAT']] \
+    .apply(lambda x: int(x[0]!=x[1]), axis=1)
+    # in diff_need = 1 how many are diff need within 6 types?
+    # only 5 - those are exactly the ones with need_sum > 1 and are following
+    # fmla id: 147, 1558, 2025, 2670 are both need_own and need_illchild
+    # fmla id: 603 is both need_ill_child and need_illparent
+
+fmla[(fmla['diff_need']==1) & ((fmla['B6_1_CAT']==1)
+                               | (fmla['B6_1_CAT']==11)
+                               | (fmla['B6_1_CAT']==12)
+                               | (fmla['B6_1_CAT']==13)
+                               | (fmla['B6_1_CAT']==21))
+                             & ((fmla['B6_2_CAT'] == 1)
+                                | (fmla['B6_2_CAT'] == 11)
+                                | (fmla['B6_2_CAT'] == 12)
+                                | (fmla['B6_2_CAT'] == 13)
+                                | (fmla['B6_2_CAT'] == 21))][['num_leaves_need', 'B5_CAT','diff_need','B6_1_CAT','B6_2_CAT', \
+                                                              'need_own', 'need_illchild']]
+
+
+
+fmla[fmla.need_sum>1][['need_sum'] + ['need_%s' % x for x in types]]
+
+fmla[fmla['diff_need']==1][['num_leaves_need', 'B5_CAT','diff_need','B6_1_CAT','B6_2_CAT', 'need_own', 'need_illchild']
+
+
+
+######
+
+d['take_matdis2'] = np.where(np.isnan(d['take_matdis2']), 0, d['take_matdis2'])
+d['take_matdis2'] = np.where((np.isnan(d['A5_1_CAT'])) & (np.isnan(d['A5_2_CAT'])), np.nan, d['take_matdis2'])
+d['take_matdis2'] = np.where(np.isnan(d['take_matdis2']) & ((d['LEAVE_CAT'] == 2) | (d['LEAVE_CAT'] == 3)), 0,
+                            d['take_matdis2'])
+d['take_matdis2'] = np.where(np.isnan(d['take_matdis2']) & (d['male'] == 1), 0, d['take_matdis2'])
+# make sure take_matdis2 = 0 for matdis2 taker whose most recent leave is not matdis2
+d['take_matdis2'] = np.where((d['take_matdis2'] == 1) &
+                            (d['A20'] == 2) &
+                            (d['A5_1_CAT'] == 21) &
+                            (d['A5_2_CAT'] != 21), 0, d['take_matdis2'])
+
+
+
+##
+
+for c in d.columns:
+    if c[:5]=='rpl':
+        print(c)
+    else:
+        pass

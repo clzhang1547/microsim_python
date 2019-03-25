@@ -3,13 +3,7 @@
 This program loads in the raw ACS files, creates the necessary variables
 for the simulation and saves a master dataset to be used in the simulations.
 
-2 March 2018
-hautahi
-
-To do:
-- The biggest missing piece is the imputation of ACS variables using the CPS. These are currently just randomly generated.
-- Check if the ACS variables are the same as those in the C++ code
-
+chris zhang 2/28/2019
 """
 
 # -------------------------- #
@@ -18,6 +12,9 @@ To do:
 
 import pandas as pd
 import numpy as np
+from _5a_aux_functions import fillna_binary, fillna_df
+import sklearn.linear_model
+import mord
 from time import time
 
 t0 = time()
@@ -27,17 +24,24 @@ t0 = time()
 
 # Load data
 st = 'ca'
-d_hh = pd.read_csv("C:/workfiles/Microsimulation/git/large_data_files/ss15h%s.csv" % st)
+yr = 16
+adjinc_2012 = 1022342 # to conform with 2012 dollars in FMLA
+d_hh = pd.read_csv("C:/workfiles/Microsimulation/git/large_data_files/ss%sh%s.csv" % (yr, st))
 
 # Create Variables
 d_hh["nochildren"]  = pd.get_dummies(d_hh["FPARC"])[4]
-d_hh['faminc'] = d_hh['FINCP']*d_hh['ADJINC'] / 1042852 / 1000 # adjust to 2012 thousand dollars to conform with FMLA 2012 data
+d_hh['faminc'] = d_hh['FINCP']*d_hh['ADJINC'] / adjinc_2012 / 1000 # adjust to 2012 thousand dollars to conform with FMLA 2012 data
 d_hh.loc[(d_hh['faminc']<=0), 'faminc'] = 0.01/1000 # force non-positive income to be epsilon to get meaningful log-income
 d_hh["lnfaminc"]    = np.log(d_hh["faminc"])
 
 # Number of dependents
 d_hh['ndep_kid'] = d_hh.NOC
 d_hh['ndep_old'] = d_hh.R65
+
+# -------------------------- #
+# CPS - read in first for estimation/imputation during handling each chunk of ACS personal file
+# -------------------------- #
+cps = pd.read_csv('./data/cps/cps_for_acs_sim.csv')
 
 # -------------------------- #
 # ACS Personal File
@@ -47,12 +51,22 @@ chunk_size = 100000
 dout = pd.DataFrame([])
 ichunk = 1
 
-# Load data
-for d in pd.read_csv("C:/workfiles/Microsimulation/git/large_data_files/ss15p%s.csv" % st, chunksize=chunk_size):
+# clean ACS data in chunks
+print('Cleaning ACS data for. State chosen = %s' % st)
+for d in pd.read_csv("C:/workfiles/Microsimulation/git/large_data_files/ss%sp%s.csv" % (yr, st), chunksize=chunk_size):
 
     # Merge with the household level variables
     d = pd.merge(d,d_hh[['SERIALNO', 'nochildren', 'faminc','lnfaminc','PARTNER', 'ndep_kid', 'ndep_old']],
                      on='SERIALNO')
+
+    # -------------------------- #
+    # Remove ineligible workers, include only
+    # civilian employed (ESR=1/2), and
+    # have paid work (COW=1/2/3/4/5), including self-employed(COW=6/7)
+    # -------------------------- #
+    d = d[((d['ESR']==1) | (d['ESR']==2)) &
+          ((d['COW']==1) | (d['COW']==2) | (d['COW']==3) | (d['COW']==4) | (d['COW']==5) |
+           (d['COW']==6) | (d['COW']==7))]
 
     # Rename ACS variables to be consistent with FMLA data
     rename_dic = {'AGEP': 'age'}
@@ -112,6 +126,7 @@ for d in pd.read_csv("C:/workfiles/Microsimulation/git/large_data_files/ss15p%s.
 
     # Hours per week, total working weeks
     d['wkhours'] = d['WKHP']
+    # Weeks worked - average of categories
     dict_wks = {
         1: 51,
         2: 48.5,
@@ -122,8 +137,19 @@ for d in pd.read_csv("C:/workfiles/Microsimulation/git/large_data_files/ss15p%s.
     }
     d['weeks_worked_cat'] = d['WKW'].map(dict_wks)
     d['weeks_worked_cat'] = np.where(d['weeks_worked_cat'].isna(), 0, d['weeks_worked_cat'])
+    # Weeks worked - WKW category bounds, for bounding imputed weeks worked from CPS
+    dict_wkwBounds ={
+        1: (50, 52),
+        2: (48, 49),
+        3: (40, 47),
+        4: (27, 39),
+        5: (14, 26),
+        6: (1, 13)
+    }
+    d['wkw_min'] = d['WKW'].apply(lambda x: dict_wkwBounds[x][0] if not np.isnan(x) else np.nan)
+    d['wkw_max'] = d['WKW'].apply(lambda x: dict_wkwBounds[x][1] if not np.isnan(x) else np.nan)
     # Total wage past 12m, adjusted to 2012, and its log
-    d['wage12'] = d['WAGP'] *d['ADJINC'] / 1042852
+    d['wage12'] = d['WAGP'] *d['ADJINC'] / adjinc_2012
     d['lnearn'] = np.nan
     d.loc[d['wage12']>0, 'lnearn'] = d.loc[d['wage12']>0, 'wage12'].apply(lambda x: np.log(x))
 
@@ -150,18 +176,23 @@ for d in pd.read_csv("C:/workfiles/Microsimulation/git/large_data_files/ss15p%s.
 
     # Occupation
 
-    # make numeric OCCP = OCCP10 if ACS 2011-2015, or OCCP12 if ACS 2012-2016
-    if 'N.A.' in d['OCCP12'].value_counts().index:
-        d.loc[d['OCCP12']=='N.A.', 'OCCP12'] = d.loc[d['OCCP12']=='N.A.', 'OCCP12'].apply(lambda x: np.nan)
-    d.loc[d['OCCP12'].notna(), 'OCCP12'] = d.loc[d['OCCP12'].notna(), 'OCCP12'].apply(lambda x: int(x))
+    # use numeric OCCP = OCCP12 if ACS 2011-2015, or OCCP = OCCP if ACS 2012-2016
+    if yr==15:
+        if 'N.A.' in d['OCCP12'].value_counts().index:
+            d.loc[d['OCCP12']=='N.A.', 'OCCP12'] = d.loc[d['OCCP12']=='N.A.', 'OCCP12'].apply(lambda x: np.nan)
+        d.loc[d['OCCP12'].notna(), 'OCCP12'] = d.loc[d['OCCP12'].notna(), 'OCCP12'].apply(lambda x: int(x))
 
-    if 'N.A.' in d['OCCP10'].value_counts().index:
-        d.loc[d['OCCP10']=='N.A.', 'OCCP10'] = d.loc[d['OCCP10']=='N.A.', 'OCCP10'].apply(lambda x: np.nan)
-    d.loc[d['OCCP10'].notna(), 'OCCP10'] = d.loc[d['OCCP10'].notna(), 'OCCP10'].apply(lambda x: int(x))
+        if 'N.A.' in d['OCCP10'].value_counts().index:
+            d.loc[d['OCCP10']=='N.A.', 'OCCP10'] = d.loc[d['OCCP10']=='N.A.', 'OCCP10'].apply(lambda x: np.nan)
+        d.loc[d['OCCP10'].notna(), 'OCCP10'] = d.loc[d['OCCP10'].notna(), 'OCCP10'].apply(lambda x: int(x))
 
-    d['OCCP'] = np.nan
-    d['OCCP'] = np.where(d['OCCP12'].notna(), d['OCCP12'], d['OCCP'])
-    d['OCCP'] = np.where((d['OCCP'].isna()) & (d['OCCP12'].isna()) & (d['OCCP10'].notna()), d['OCCP10'], d['OCCP'])
+        d['OCCP'] = np.nan
+        d['OCCP'] = np.where(d['OCCP12'].notna(), d['OCCP12'], d['OCCP'])
+        d['OCCP'] = np.where((d['OCCP'].isna()) & (d['OCCP12'].isna()) & (d['OCCP10'].notna()), d['OCCP10'], d['OCCP'])
+    elif yr==16:
+        if 'N.A.' in d['OCCP'].value_counts().index:
+            d.loc[d['OCCP']=='N.A.', 'OCCP'] = d.loc[d['OCCP']=='N.A.', 'OCCP'].apply(lambda x: np.nan)
+        d.loc[d['OCCP'].notna(), 'OCCP'] = d.loc[d['OCCP'].notna(), 'OCCP'].apply(lambda x: int(x))
 
 
     d['occ_1']=0
@@ -219,44 +250,34 @@ for d in pd.read_csv("C:/workfiles/Microsimulation/git/large_data_files/ss15p%s.
         # make sure ind_x gets nan if INDP code is nan
     for x in range(1, 14):
         d.loc[d['INDP'].isna(), 'ind_%s' % x] = np.nan
-    # -------------------------- #
-    # Remove ineligible workers
-    # -------------------------- #
-
-    # Restrict dataset to civilian employed workers (check this)
-        # d = d[(d['ESR'] == 1) | (d['ESR'] == 2)]
-
-    #  Restrict dataset to those that are not self-employed
-        # d = d[(d['COW'] != 6) & (d['COW'] != 7)]
 
     # -------------------------- #
     # CPS Imputation
     # -------------------------- #
-
-    """
-    Not all the required behavioral independent variables are available
-    within the ACS. These therefore need to be imputed CPS
-
-    d["weeks_worked"] =
-    d["weekly_earnings"] =
-    """
-
-    # These are just placeholders for now
-    # d["coveligd"] = np.nan
-    # d['union'] = np.nan
-
-    # adding in the prhourly worker imputation
-    # Double checked C++ code, and confirmed this is how they did hourly worker imputation.
-    hr_est=pd.read_csv('estimates/CPS_paid_hrly.csv').set_index('var').to_dict()['est']
-    d['prhourly']=0
-    for dem in hr_est.keys():
-        if dem!='Intercept':
-            d['prhourly']+=d[dem].fillna(0)*hr_est[dem]
-    d['prhourly']+=hr_est['Intercept']
-    d['prhourly']=np.exp(d['prhourly'])/(1+np.exp(d['prhourly']))
-    d['rand']=pd.Series(np.random.rand(d.shape[0]), index=d.index)
-    d['hourly']= np.where(d['prhourly']>d['rand'],1,0)
-    d=d.drop('rand', axis=1)
+    # predictors and weights
+    X = cps[['female', 'black', 'age', 'agesq', 'BA', 'GradSch'] +
+            ['ind_%s' % x for x in range(1, 14)] +
+            ['occ_%s' % x for x in range(1, 11)]]
+    w = cps['marsupwt']
+    #Xd = fillna_binary(d[X.columns])
+    Xd = fillna_df(d[X.columns])
+    # paid hourly
+    y = cps['hourly']
+    clf = sklearn.linear_model.LogisticRegression(solver='liblinear').fit(X, y, sample_weight=w)
+    d['hourly'] = pd.Series(clf.predict(Xd), index=d.index)
+    # one employer
+    y = cps['oneemp']
+    clf = sklearn.linear_model.LogisticRegression(solver='liblinear').fit(X, y, sample_weight=w)
+    d['oneemp'] = pd.Series(clf.predict(Xd), index=d.index)
+    # weeks worked - impose condition of categorical WKW from ACS itself
+    y = cps['wkswork']
+    clf = sklearn.linear_model.LinearRegression().fit(X, y, sample_weight=w)
+    d['wkswork_dec'] = pd.Series(clf.predict(Xd), index=d.index)
+    d['wkswork'] = d[['wkswork_dec', 'wkw_min', 'wkw_max']].apply(lambda x: min(max(int(x[0]), x[1]), x[2]),axis=1)
+    # employer size
+    y = cps['empsize']
+    clf = mord.LogisticAT().fit(X, y)
+    d['empsize'] = pd.Series(clf.predict(Xd), index=d.index)
 
     # -------------------------- #
     # Save the resulting dataset
@@ -276,18 +297,18 @@ for d in pd.read_csv("C:/workfiles/Microsimulation/git/large_data_files/ss15p%s.
             ]
     cols += ['ind_%s' % x for x in range(1, 14)]
     cols += ['OCCP'] + ['occ_%s' % x for x in range(1, 11)]
-    # cols += ['hourly'] # optional, move imputation of hourly to somewhere else?
+    cols += ['hourly', 'oneemp', 'wkswork', 'empsize']
+    cols += ['WKW', 'wkswork_dec','wkw_min', 'wkw_max']
+    cols += ['PWGTP%s' % x for x in range(1, 81)]
 
     d_reduced = d[cols]
     dout = dout.append(d_reduced)
     print('ACS data cleaned for chunk %s of personal data...' % ichunk)
     ichunk += 1
-dout.to_csv("./data/acs/ACS_cleaned_forsimulation_%s.csv" % st, index=False, header=True)
 
-    # a wage only file for testing ABF
-# d2 = d_reduced[['wage12','PWGTP']]
-# d2.to_csv("./data/acs/ACS_cleaned_forsimulation_%s_wage.csv" % st, index=False, header=True)
+dout.to_csv("./data/acs/ACS_cleaned_forsimulation_20%s_%s.csv" % (yr, st), index=False, header=True)
 
 t1 = time()
 print('ACS data cleaning finished for state %s. Time elapsed = %s' % (st.upper(), (t1-t0)))
 
+##
