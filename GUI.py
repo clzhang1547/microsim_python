@@ -513,9 +513,9 @@ class MicrosimGUI(Tk):
 
         # TODO: Remove
         # --------- TEST ONLY -------------
-        self.fmla_file.set('C:/Users/mtrinh/PycharmProjects/MicrosimGUI/data/fmla_2012/fmla_2012_employee_restrict_puf.csv')
-        self.acs_directory.set('C:/Users/mtrinh/PycharmProjects/MicrosimGUI/data/acs')
-        self.output_directory.set('C:/Users/mtrinh/PycharmProjects/MicrosimGUI/output')
+        self.fmla_file.set('C:/workfiles/Microsimulation/microsim_python/data/fmla_2012/fmla_2012_employee_restrict_puf.csv')
+        self.acs_directory.set('C:/workfiles/Microsimulation/microsim_python/data/acs')
+        self.output_directory.set('C:/workfiles/Microsimulation/microsim_python/output')
         # self.test_result_output()
 
     def check_all_gov_employees(self, event=None):
@@ -608,11 +608,14 @@ class MicrosimGUI(Tk):
         d_takeup['illspouse'] = d_takeup.pop('Ill Spouse')
         d_takeup['illparent'] = d_takeup.pop('Ill Parent')
 
-        incl_empgov = settings.government_employees
+        incl_empgov_fed = settings.fed_employees
+        incl_empgov_st = settings.state_employees
+        incl_empgov_loc = settings.local_employees
         incl_empself = settings.self_employed
+        sim_method = settings.simulation_method
 
         prog_para = [elig_wage12, elig_wkswork, elig_yrhours, elig_empsize, rrp, wkbene_cap, d_maxwk, d_takeup,
-                     incl_empgov, incl_empself]
+                     incl_empgov_fed, incl_empgov_st, incl_empgov_loc, incl_empself, sim_method]
 
         se = SimulationEngine(st, yr, fps_in, fps_out, clf_name, prog_para)
 
@@ -673,7 +676,8 @@ class MicrosimGUI(Tk):
                         self.state.get(), self.simulation_method.get(), self.benefit_effect.get(), self.calibrate.get(),
                         self.clone_factor.get(), self.se_analysis.get(), self.extend.get(),
                         self.fmla_protection_constraint.get(), self.replacement_ratio.get(),
-                        self.government_employees.get(), self.needers_fully_participate.get(),
+                        self.government_employees.get(),
+                        self.needers_fully_participate.get(),
                         self.random_seed.get(), self.self_employed.get(), self.state_of_work.get(),
                         self.top_off_rate.get(), self.top_off_min_length.get(), self.weekly_ben_cap.get(),
                         self.weight_factor.get(), self.eligible_earnings.get(), self.eligible_weeks.get(),
@@ -682,7 +686,9 @@ class MicrosimGUI(Tk):
                         {key: value.get() for key, value in self.take_up_rates.items()},
                         {key: value.get() for key, value in self.leave_probability_factors.items()},
                         self.payroll_tax.get(), self.benefits_tax.get(), self.average_state_tax.get(),
-                        self.max_taxable_earnings_per_person.get(), self.total_taxable_earnings_input.get())
+                        self.max_taxable_earnings_per_person.get(), self.total_taxable_earnings_input.get(),
+                        self.fed_employees.get(), self.state_employees.get(), self.local_employees.get()
+                        )
 
     def browse_file(self, file_input):
         # Open a file dialogue where user can choose a file. Possible options are limited to CSV and Excel files.
